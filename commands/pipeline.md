@@ -294,7 +294,12 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
      gets at least a happy-path test.
    - `DONE` → continue. `NEEDS_CONTEXT` → supply, re-dispatch. `BLOCKED` → more context,
      then a stronger model, then split the task, then escalate. Never silently retry.
-4. Checkpoint after each batch: update the ledger, verify the suite, surface drift.
+   - **Tests: targeted only.** The implementer runs only the tests covering the files   
+     this task changes. It must NOT run the whole suite — Stage 4's gate does that once.
+   - **Do not re-run a passing test to check for flakiness.** If you suspect a test is  
+     flaky, name it in the DONE report and move on.
+4. Checkpoint after each batch: update the ledger, surface drift, and — you, the orchestrator
+   , not the implementer — run the suite once per batch and record only the summary line.
 5. Never parallelise implementers — they share the same working tree. Execution is
    strictly sequential, one task at a time.
 6. Ledger: `Task N: complete (commits <base>..<head>)`.
