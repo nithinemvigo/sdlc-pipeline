@@ -16,6 +16,7 @@ rule below was first written as a prompt instruction and violated anyway.
   5. No Read of a path this agent already read in this session.
   9. No shell dump (`cat`, `grep -n ""`, `sed -n '1,$p'`) of a file rules 1-2 would deny.
  10. No second full-test-suite run inside one dispatch (targeted runs always allowed).
+ 11. No loop wrapped around a test command to check for flakiness.
 
 Measured justification: 83 full reads of two documents produced ~9.3M tokens of
 re-transmission - 29% of a 32.3M-token, $20.87 session. A single planner spent
@@ -396,6 +397,48 @@ def check_full_suite(payload) -> None:
         )
 
 
+# Rule 11 (v6.3) - do not loop a test to prove it is not flaky.
+# Measured: the heaviest implementer dispatch of one run (75 records) ended with
+#   for i in 1 2 3; do flutter test <one test file> --plain-name ...; done
+# Three executions of a test that had already passed, to check stability. The instinct is
+# reasonable and the cost is not: each iteration is a turn, and a turn re-sends the whole
+# accumulated context. Flakiness is a real problem, but it belongs to the test gate, which
+# runs in a short-lived context, not to an implementer 70 turns deep.
+#
+# Deliberately narrow: this matches a *loop or repetition construct wrapped around* a test
+# command. A plain re-run after an edit is the RED-GREEN cycle and is always allowed - the
+# hook cannot tell "re-run after fixing" from "re-run to check flakiness", so it does not try.
+LOOP_WRAPPER_RE = re.compile(
+    r"""(?:
+          \bfor\b[^;]{0,80}\bin\b[^;]{0,80};\s*do\b     # for i in 1 2 3; do
+        | \bwhile\b[^;]{0,60};\s*do\b                    # while ...; do
+        | \brepeat\s+\d+                                 # zsh: repeat 3
+        | \bseq\s+\d+\s*\|\s*xargs                       # seq 3 | xargs
+        | \bxargs\s+-[A-Za-z]*n?\d*\s*.*\btest\b         # xargs ... test
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def check_test_loop(payload) -> None:
+    """Rule 11 - block a loop/repeat construct wrapped around a test command."""
+    cmd = str((payload.get("tool_input") or {}).get("command", ""))
+    if not cmd or not FULL_SUITE_RE.search(cmd) or not LOOP_WRAPPER_RE.search(cmd):
+        return
+    agent_raw = agent_of(payload)
+    if not agent_raw or any(is_role(agent_raw, r) for r in SUITE_EXEMPT):
+        return  # the gate roles may legitimately hunt flakiness
+    audit(payload, "deny", "11-test-loop", cmd[:60])
+    deny(
+        "BLOCKED by context budget guard: you are about to run the same test repeatedly to "
+        "check it is stable. Every iteration is a turn, and every turn re-sends your entire "
+        "accumulated context - by this point in a dispatch that is the most expensive thing "
+        "you can do for the least new information. A test that passed once is green for your "
+        "purposes. If you genuinely suspect flakiness, say so in your DONE report naming the "
+        "test, and the test gate will investigate it in a fresh, cheap context."
+    )
+
+
 def check_dump_bypass(payload) -> None:
     """Rule 9 - apply the Read rules to shell commands that dump a whole file."""
     cmd = str((payload.get("tool_input") or {}).get("command", ""))
@@ -462,6 +505,7 @@ def main() -> None:
     tool = payload.get("tool_name")
     if tool in ("Bash", "PowerShell"):
         check_bash(payload)
+        check_test_loop(payload)
         check_full_suite(payload)
         check_dump_bypass(payload)
         ok(payload, "shell-ok", str((payload.get("tool_input") or {}).get("command", ""))[:60])
