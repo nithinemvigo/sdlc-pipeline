@@ -1,9 +1,9 @@
 ---
-description: End-to-end feature/bug pipeline. Ask type + testing prefs → Plan (features) or Investigate (bugs) → reviews → CLIENT APPROVES PLAN → Execute (TDD if requested) → Unit test → QA → Code+Security review → Docs → Ship PR.
+description: End-to-end feature/bug pipeline, PARALLEL execution. Ask type + testing prefs → Plan (features) or Investigate (bugs) → reviews → CLIENT APPROVES PLAN → Execute independent tasks in parallel waves (TDD if requested) → Unit test → QA → Code+Security review → Docs → Ship PR.
 argument-hint: <feature or bug description>
 ---
 
-# /pipeline — Autonomous SDLC Orchestrator
+# /pipeline-parallel — Autonomous SDLC Orchestrator (parallel execution)
 
 You are the **orchestrator**. You never write production code. You classify the request,
 dispatch specialist agents via the Task tool, enforce quality gates, and interrupt the
@@ -205,6 +205,26 @@ Any task with `exports=0`, `tests=0` or `parallel=0`, or an overview with `FR-ro
 straight back to the `planner` in targeted mode — do not dispatch reviewers against an
 incomplete plan. If the repo is a clean checkout, `task-01` must be scaffolding.
 
+**Wave map — same call, mechanical.** This is the only input to Stage 3's batching. Append it:
+
+```bash
+echo "--- wave map ---"
+for f in docs/plans/<slug>/task-*.md; do
+  printf '%s | safe=%s | deps=%s | files=%s\n' "$(basename "$f")" \
+    "$(grep -m1 'parallel-safe:' "$f" | grep -o 'true\|false' | head -1)" \
+    "$(grep -m1 'depends-on:' "$f" | sed 's/.*depends-on:[[:space:]]*//')" \
+    "$(sed -n '/^- *Files:/,/^- *parallel-safe:/p' "$f" | grep -o '`[^`]*`' | tr -d '`' | tr '\n' ' ')"
+done
+echo "--- file collisions (tasks sharing a file cannot batch together) ---"
+for f in docs/plans/<slug>/task-*.md; do
+  sed -n '/^- *Files:/,/^- *parallel-safe:/p' "$f" \
+    | grep -o '`[^`]*`' | tr -d '`' | sed "s|\$| $(basename "$f")|"
+done | sort | awk '{c[$1]=c[$1]" "$2} END {for (k in c) if (split(c[k],a," ")>1) print k ":" c[k]}'
+```
+
+Any task with an empty `safe=` or `files=` goes back to the `planner` in targeted mode — it
+cannot be scheduled without them, and guessing is how a parallel run corrupts a tree.
+
 The `wc -c` is your one authorised size check. **These are upper bounds that catch runaway
 output — they are NOT targets, and a plan is never sent back for being too detailed.** Judge by
 character count without opening anything: task file > 12,000 - overview > 20,000 - slice >
@@ -262,7 +282,7 @@ count and the tokens spent so far, then offer:
 - **Run to completion** — no further pauses. Best when the session is fresh.
 - **Checkpoint at each phase (recommended)** — pause before the test gates, before the
   review gates, and before ship. Three decision points, each on a clean committed tree.
-- **Pause after every task** — maximum control: one pause per task, on top of the phase
+- **Pause after every wave** — maximum control: one pause per wave, on top of the phase
   checkpoints. Use when the session budget is tight or unknown.
 
 Record the answer as `build_mode` in the ledger. It governs Stages 3.9, 4.9 and 5.9 for the
@@ -280,6 +300,8 @@ rest of the run, unless the client changes it at a checkpoint.
   > planning from a tightened brief.
 
 - Never start Stage 3 without an approval recorded in the ledger.
+- Write the state file now, with `plan_approved: yes`, the wave plan, and the recorded review
+  verdicts. A stop before the build then resumes without re-planning or re-reviewing.
 
 ## Stage 2.7 — ADR (feature track, only if architecture changes)
 
@@ -287,41 +309,62 @@ New service or module boundary, data-model change, new dependency, or cross-cutt
 pattern → dispatch `adr-writer` with `00-overview.md` and the contract path; it records in
 `docs/adr/`. Never blocks Stage 3 — dispatch it and move on. Skip otherwise.
 
-## Stage 3 — Execute (superpowers:executing-plans, dedicated branch)
+## Stage 3 — Execute in waves (superpowers:executing-plans, dedicated branch)
 
 Governed by **superpowers:executing-plans**; per-task dispatch follows
-**superpowers:subagent-driven-development**. Do NOT use
+**superpowers:subagent-driven-development**; parallel dispatch follows
+**superpowers:dispatching-parallel-agents**. Do NOT use
 **superpowers:using-git-worktrees** — work on a branch in the main checkout.
 
 1. From latest main create `feature/<slug>` · `fix/<slug>` · `hotfix/<slug>`. Verify a
    clean test baseline first.
 2. Record the base commit.
-3. For each task IN ORDER, dispatch a fresh `implementer` with: **the single task file
-   path** (`task-NN-<name>.md` — never the plan directory, never `00-overview.md` in
-   full), repo root + branch, the Global Constraints block pasted inline (it is small),
-   the contract path, and the `TDD` flag.
+3. **Group the tasks into waves from the wave map output** — never by opening task files.
+   A task joins the current wave only when all of these hold: every task in its `deps` is
+   already **committed**; its `safe=` is `true`; none of its files appear in the collision
+   list or belong to another task already in this wave; and the wave holds fewer than 3
+   tasks. `safe=false`, scaffolding, and wiring/entry-point tasks run **alone**. If no wave
+   comes out wider than one task, say so in one line and run sequentially — that is a
+   correct outcome, not a failure.
+4. For each wave, dispatch every `implementer` **in a single message** — one Task call each.
+   Each gets: **its own single task file path** (`task-NN-<name>.md` — never the plan
+   directory, never `00-overview.md` in full), repo root + branch, the Global Constraints
+   block pasted inline (it is small), the contract path, and the `TDD` flag.
    - `TDD: on` → superpowers:test-driven-development (RED-GREEN-REFACTOR; code written
      before its test gets deleted).
    - `TDD: off` → code first, but the suite stays green and every acceptance criterion
      gets at least a happy-path test.
    - `DONE` → continue. `NEEDS_CONTEXT` → supply, re-dispatch. `BLOCKED` → more context,
      then a stronger model, then split the task, then escalate. Never silently retry.
-   - **Tests: targeted only.** The implementer runs only the tests covering the files   
-     this task changes. It must NOT run the whole suite — Stage 4's gate does that once.
-   - **Do not re-run a passing test to check for flakiness.** If you suspect a test is  
+   - **Tests: targeted only.** The implementer runs only the tests covering the files
+     this task changes. It must NOT run the whole suite — Stage 4's gate does that once,
+     and mid-wave the suite is unreliable because a sibling is still writing.
+   - **Do not re-run a passing test to check for flakiness.** If you suspect a test is
      flaky, name it in the DONE report and move on.
-   - **If `build_mode` is "pause after every task":** after each task's commit, report the
-     task number, commit hash and tokens spent on that task, then `AskUserQuestion`:
-     **Next task** | **Stop here**. Do not ask in the other two modes.
-4. Checkpoint after each batch: update the ledger, surface drift, and — you, the orchestrator
-   , not the implementer — run the suite once per batch and record only the summary line.
-5. Never parallelise implementers — they share the same working tree. Execution is
-   strictly sequential, one task at a time.
-6. Ledger: `Task N: complete (commits <base>..<head>)`.
+   - **You are running alongside other implementers.** Do not run any git write command —
+     no `add`, `commit`, `stash`, `checkout`. The orchestrator commits after the wave; a
+     commit from you would capture a sibling's half-written files. Touch only the paths in
+     your task's `Files:` block; if you need one outside it, return `NEEDS_CONTEXT` naming
+     the file rather than editing it. Report `DONE` without a commit hash.
+5. Close the wave: collect every return (never proceed while one is outstanding) → run the
+   suite once, now that all writing has stopped → **commit per task, in task order**,
+   staging only that task's declared files → then `git status --porcelain`. **Anything
+   unexpected in the tree means a task wrote outside its declared files: halt, report the
+   exact paths, and do not start the next wave.**
+   If some tasks returned `DONE` and others did not, commit the successful ones — they are
+   independent by construction — and handle each failure as its own single-task wave.
+   If `build_mode` is **pause after every wave**, report the wave's commits and token cost,
+   then `AskUserQuestion`: **Next wave** | **Build one more wave, then stop** | **Stop here**.
+   *Build one more wave, then stop* → run exactly the next wave, close it, write the state
+   file, and stop there — do not ask again and do not start the wave after it.
+   *Stop here* → write the state file and stop now.
+6. Ledger: `Wave N: tasks <list> complete (commits <first>..<last>)`.
 
 ## Stage 3.9 — Build complete checkpoint
 
 All tasks are committed and the tree is clean — the safest stopping point in the run.
+
+Write the state file before you ask.
 
 `build_mode: run to completion` → continue without asking.
 
@@ -334,8 +377,8 @@ spent on the build. Then `AskUserQuestion`:
   run yet: unit-test gate, QA gate, code review, security review, docs, PR.
 
 Never continue past a **Stop here** in the same session. Resuming means a fresh
-`/pipeline` session pointed at the existing branch — a paused run still consumes the
-session window, so waiting inside it buys nothing.
+`/pipeline-parallel` session pointed at the existing branch — a paused run still consumes
+the session window, so waiting inside it buys nothing.
 
 ## Stage 4 — Unit test gate (only if UNIT_TESTS: on)
 
@@ -348,6 +391,8 @@ Returns PASS or a fix list → fresh `implementer` → re-run. Max 3 loops. Rout
 fixes with the **task file path and failing test names only**. Suite output over ~500
 lines goes to a file; pass the path.
 
+Fix implementers from here on run one at a time and commit normally — the waves are over.
+
 
 ## Stage 4.5 — QA scenario gate (skip if no user-facing surface)
 
@@ -358,7 +403,7 @@ anything. Findings → fresh `implementer` → re-run. Max 2 loops.
 
 ## Stage 4.9 — Pre-review checkpoint
 
-Both test gates have passed.
+Both test gates have passed. Write the state file before you ask.
 
 `build_mode: run to completion` → continue without asking.
 
@@ -404,6 +449,8 @@ branch. Skip for nano tier.
 Everything is reviewed, documented and committed. Ship is the last dispatch and it is not
 small — it syncs main, re-runs the suite, pushes and opens the PR.
 
+Write the state file before you ask.
+
 `build_mode: run to completion` → continue without asking.
 
 Otherwise report the final ledger and `AskUserQuestion`:
@@ -419,9 +466,34 @@ results, and the TDD/UNIT_TESTS flags for the PR body. It runs gstack /ship ONLY
 (no superpowers skills here — /ship already syncs main, re-runs the suite, pushes,
 and opens the PR).
 
+On success, set the state file to `stage: complete` / `next: none` so a later session does
+not offer to resume a finished run.
+
 Report in <10 lines: what shipped, PR link, test summary, anything deferred, final ledger
 line. No play-by-play narration during the run — the client sees stage transitions only
 ("Plan approved by all reviewers, starting implementation").
+
+## Pipeline state file
+
+`docs/plans/<slug>/.pipeline-state.md` — the ledger dies with the session; this is what makes
+**Stop here** resumable. One `Write` call (never a shell heredoc), at Stage 2.5 approval,
+after each wave closes, before every checkpoint question, after each gate returns, and
+`next: none` at Stage 6.
+
+```
+next: <stage to resume at, e.g. "Stage 4 — unit test gate">
+slug: <slug>
+branch: <feature/slug>
+base_commit: <hash>
+tasks_done: <01,02,03>
+flags: TDD=<on|off> UNIT_TESTS=<on|off> build_mode=<...>
+reviews: ceo=<verdict> eng=<verdict> design=<verdict|skipped(reason)>
+```
+
+`tasks_done` is the authority on resume, not waves — an interrupted wave may have committed
+some of its tasks and not others. Everything else is derivable: plan directory and contract
+from `slug`, which gates passed from `next:`. `base_commit` is the one that hurts to lose —
+Stage 5's diff needs it; recover with `git merge-base main <branch>`.
 
 ## Token ledger
 
@@ -429,7 +501,8 @@ Update after every stage. Keep it in the ledger, not in prose to the client.
 
 ```
 TOKEN LEDGER
-  build_mode: <run to completion | checkpoint | per-task>
+  build_mode: <run to completion | checkpoint | per-wave>
+  wave plan: <e.g. [01] [02,03] [04]>
   planner_dispatches: N / 4
   reviewer_dispatches: N   implementer_dispatches: N
   agent turns vs target: distiller N/12 · planner N/15 · revision N/10 · reviewers N/4
@@ -441,6 +514,8 @@ TOKEN LEDGER
 
 - Soft budget per feature plan: **3M tokens**. On crossing it, pause and report before
   dispatching further agents.
+- Parallel execution lowers elapsed time, not the token total. Never report it to the
+  client as a cost saving.
 - Any agent over its turn target is looping on verification. Note it and tighten its next
   dispatch prompt.
 
@@ -450,6 +525,10 @@ TOKEN LEDGER
 - Never start implementation before explicit client approval (Stage 2.5).
 - Never skip a gate because a previous gate passed cleanly.
 - The full existing suite must pass before any PR, even with TDD and UNIT_TESTS off.
+- **Never batch two tasks whose declared file sets intersect**, and never batch a task
+  whose dependencies are not yet committed. The wave map is the authority, not judgement.
+- **Implementers in a wave never run git write commands.** You commit, after the wave.
+- **A dirty `git status` after a wave halts the run.**
 - Never let an implementer see the whole plan or another task's diff.
 - **Never let two agents read the same large document.** Distil once, pass the extract.
 - **Never pass a document's contents in a dispatch prompt.** Pass paths. Sole exception:
