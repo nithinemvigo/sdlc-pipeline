@@ -256,6 +256,18 @@ Present in plain language, in ONE turn: short summary (what gets built, in what 
 key decisions), the `00-overview.md` path, the contract's `UNCONFIRMED` items, and an
 `AskUserQuestion`: **Approve and build** | **Request changes**.
 
+In the SAME `AskUserQuestion` call, ask a second question — **Build mode.** State the task
+count and the tokens spent so far, then offer:
+
+- **Run to completion** — no further pauses. Best when the session is fresh.
+- **Checkpoint at each phase (recommended)** — pause before the test gates, before the
+  review gates, and before ship. Three decision points, each on a clean committed tree.
+- **Pause after every task** — maximum control: one pause per task, on top of the phase
+  checkpoints. Use when the session budget is tight or unknown.
+
+Record the answer as `build_mode` in the ledger. It governs Stages 3.9, 4.9 and 5.9 for the
+rest of the run, unless the client changes it at a checkpoint.
+
 - **Request changes** → ≤3 tasks affected: `planner` in TARGETED mode with only those
   task paths; re-run only the reviewer whose lens the change touches, on the changed
   files. Broader/scope/ordering/architecture changes: full revision mode.
@@ -298,12 +310,32 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
      this task changes. It must NOT run the whole suite — Stage 4's gate does that once.
    - **Do not re-run a passing test to check for flakiness.** If you suspect a test is  
      flaky, name it in the DONE report and move on.
+   - **If `build_mode` is "pause after every task":** after each task's commit, report the
+     task number, commit hash and tokens spent on that task, then `AskUserQuestion`:
+     **Next task** | **Stop here**. Do not ask in the other two modes.
 4. Checkpoint after each batch: update the ledger, surface drift, and — you, the orchestrator
    , not the implementer — run the suite once per batch and record only the summary line.
 5. Never parallelise implementers — they share the same working tree. Execution is
    strictly sequential, one task at a time.
 6. Ledger: `Task N: complete (commits <base>..<head>)`.
 
+## Stage 3.9 — Build complete checkpoint
+
+All tasks are committed and the tree is clean — the safest stopping point in the run.
+
+`build_mode: run to completion` → continue without asking.
+
+Otherwise report in ONE turn: tasks completed, commit range, suite status, and tokens
+spent on the build. Then `AskUserQuestion`:
+
+- **Continue to the test gates** — unit-tester then qa-tester. Quote what the build just
+  cost, so the client is deciding against a number rather than a guess.
+- **Stop here** — the branch keeps every commit and is resumable. Say plainly what has NOT
+  run yet: unit-test gate, QA gate, code review, security review, docs, PR.
+
+Never continue past a **Stop here** in the same session. Resuming means a fresh
+`/pipeline` session pointed at the existing branch — a paused run still consumes the
+session window, so waiting inside it buys nothing.
 
 ## Stage 4 — Unit test gate (only if UNIT_TESTS: on)
 
@@ -324,6 +356,17 @@ criteria extracted from the task files** — a short list, not the plan director
 them as real user scenarios (happy, error, empty, edge) and reports findings without fixing
 anything. Findings → fresh `implementer` → re-run. Max 2 loops.
 
+## Stage 4.9 — Pre-review checkpoint
+
+Both test gates have passed.
+
+`build_mode: run to completion` → continue without asking.
+
+Otherwise report tokens spent on the test gates and `AskUserQuestion`:
+
+- **Continue to code + security review** — two parallel reviewers, plus a fix pass if they
+  find anything Critical or Important.
+- **Stop here** — tests are green and committed; review, docs and PR remain.
 
 ## Stage 5 — Code + Security review (PARALLEL)
 
@@ -356,6 +399,19 @@ Dispatch `doc-writer` (gstack /document-release) with branch name, the diff file
 `00-overview.md`. It updates README and docs to match what changed and commits to the
 branch. Skip for nano tier.
 
+## Stage 5.9 — Pre-ship checkpoint
+
+Everything is reviewed, documented and committed. Ship is the last dispatch and it is not
+small — it syncs main, re-runs the suite, pushes and opens the PR.
+
+`build_mode: run to completion` → continue without asking.
+
+Otherwise report the final ledger and `AskUserQuestion`:
+
+- **Ship it** — dispatch `ship-pr`.
+- **Stop here** — the branch is complete and reviewed; only the push and PR remain, and
+  those can be done by hand or in a later session.
+
 ## Stage 6 — Ship
 
 Dispatch `ship-pr` with repo root + branch, plan/bug file path, review verdicts, test
@@ -373,6 +429,7 @@ Update after every stage. Keep it in the ledger, not in prose to the client.
 
 ```
 TOKEN LEDGER
+  build_mode: <run to completion | checkpoint | per-task>
   planner_dispatches: N / 4
   reviewer_dispatches: N   implementer_dispatches: N
   agent turns vs target: distiller N/12 · planner N/15 · revision N/10 · reviewers N/4
