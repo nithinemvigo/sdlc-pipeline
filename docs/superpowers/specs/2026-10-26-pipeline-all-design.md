@@ -71,13 +71,16 @@ question.
 
 1. **Slug and output path.** Derive `<slug>` (kebab-case, ≤5 words) from the request. Output
    path `docs/features/<slug>.requirements.md`.
-   - If that file already exists, ask once: **Use existing file as-is** (go straight to the
-     confirmation gate in step 4) | **Regenerate** (overwrite).
+   - If that file already exists, ask once: **Use existing file as-is** (show only its path,
+     since the orchestrator does not read the file, and ask the step-4 question; the summary,
+     counts and Open Questions are not available) | **Regenerate** (overwrite).
 2. **Dispatch `requirements-writer`** in `draft` mode (inputs in 4.2).
 3. **`NEEDS_CONTEXT`** → relay the numbered questions to the user in ONE batched message,
-   then re-dispatch in `draft` mode with the answers. At most **2** question rounds; on the
-   third dispatch the agent must draft, recording anything still unknown as Open Questions
-   and Assumptions.
+   then re-dispatch in the same mode the agent was dispatched in, with the answers. A
+   `NEEDS_CONTEXT` from a `revision` dispatch is answered with a `revision` re-dispatch
+   carrying the same `feedback` plus the answers (revision mode never regenerates the file).
+   At most **2** question rounds; on the third dispatch the agent must draft, recording
+   anything still unknown as Open Questions and Assumptions.
 4. **`DONE` → confirmation gate (HARD GATE).** In one turn, show: the file path, the agent's
    summary (≤5 lines), the counts (BR / AC / open questions), and the list of questions still
    **Open**. Ask with `AskUserQuestion`: **Approve requirements** | **Request changes**.
@@ -164,7 +167,9 @@ When the real instructions are added, only the body changes; the orchestrator ne
 1. Dispatch `qa-placeholder` with: `requirements` (the approved path, or `none`), `request`
    verbatim, `repo_root`, and `answers` (on re-dispatch).
 2. **`NEEDS_INPUT`** → relay the numbered questions to the user in ONE batched message,
-   re-dispatch with the answers. Same 2-round limit as Stage R.
+   re-dispatch with the answers. Same 2-round limit as Stage R. If the agent returns
+   `NEEDS_INPUT` a third time, do not relay it: record its questions in the ledger as
+   `QA_OPEN:` and continue to Stage 0.5.
 3. **`DONE`** → record each returned output path in the ledger under `QA_ARTIFACTS:`. No gate
    in this release; a gate can be added when the real agent defines what it produces.
 4. **`PLACEHOLDER`** → print one line (`QA agent not yet implemented — skipping.`), continue.
@@ -198,9 +203,10 @@ updating the agent file name, its `name:` field, and the Stage Q dispatch line i
 |---|---|
 | Header / description | New description: requirements-first feature pipeline. `argument-hint: <feature idea text and/or file path(s)>`. |
 | Stage 0.5 | Only two questions (TDD, unit-test round), one batched `AskUserQuestion`. `TYPE: feature` is set without asking. |
-| Stage 0.8 | Source = the approved requirements file. If `REQUIREMENTS: none`, behave exactly as `pipeline.md` (use any spec the client referenced). Contract output path: **`docs/features/<slug>.requirements.contract.md`** (see §8). Global Constraints record the requirements file as the distilled original. |
-| Stage 1 | Unchanged. The planner receives the contract path (or the requirements path directly when it is under the 4,000-token threshold), exactly as in `pipeline.md`. |
-| Stage 2.5 | Also surface any requirements Open Questions still `Open` alongside the contract's `UNCONFIRMED` items. |
+| Stage 0.8 | Source = the approved requirements file. If `REQUIREMENTS: none`, behave exactly as `pipeline.md` (use any spec the client referenced); if there is none, record `CONTRACT: none` and skip to Stage 1. When the source is under the 4,000-token threshold it is passed directly and `<contract>` = `<source>`. Contract output path: **`docs/features/<slug>.requirements.contract.md`** (see §8). When a contract exists, Global Constraints record the requirements file as the distilled original. |
+| Stage 1 | The planner receives the contract path (or the requirements path directly when it is under the 4,000-token threshold) only when one exists, i.e. not `CONTRACT: none`. Paths to files the client referenced are passed only when the ledger says `REQUIREMENTS: none`; once requirements are approved they are the source of truth and the planner does not get the raw client files. |
+| Stage 2 | When the ledger says `CONTRACT: none`: leave `<contract>` out of the `wc -c` line, do not run the plan lint, and record `LINT_SKIPPED: no source document`. The completeness check still runs. |
+| Stage 2.5 | Also surface any requirements Open Questions still `Open` alongside the contract's `UNCONFIRMED` items; write "none reported" when Stage R returned none. |
 | Token ledger | Add rows for `requirements-writer` and `qa-placeholder` dispatches and the requirements revision count. |
 | Hard rules | Add: never skip the Stage R gate when the agent returned `DONE`; never start Stage 0.5 before Stage R and Stage Q have completed; bug requests are redirected per §3. |
 | Everything else | Byte-for-byte the same as `pipeline.md`, minus bug/nano branches. |

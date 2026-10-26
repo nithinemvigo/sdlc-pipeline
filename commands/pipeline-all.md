@@ -87,7 +87,8 @@ A request that is not clearly a bug gets no question.
 
 1. **Slug and path.** Derive `<slug>` from the request (kebab-case, at most 5 words). The
    requirements path is `docs/features/<slug>.requirements.md`. If it already exists, ask
-   once: **Use the existing file** (show its path and go straight to the step-4 question) |
+   once: **Use the existing file** (show only its path — you do not read the file — and ask the
+   step-4 question; the summary, counts and Open Questions are not available) |
    **Regenerate** (overwrite it).
 2. **Dispatch `requirements-writer`** with:
    - `mode: draft`, `question_round: 0`
@@ -97,9 +98,11 @@ A request that is not clearly a bug gets no question.
    - `output`: the requirements path
    - `repo_root`
 3. **`NEEDS_CONTEXT`** → relay its numbered questions to the client in ONE batched message,
-   then re-dispatch in `draft` mode with `answers` and `question_round` + 1. At
-   `question_round: 2` the agent must draft, recording anything still unknown as Open
-   Questions and Assumptions.
+   then re-dispatch in the same mode the agent was dispatched in, with `answers` and
+   `question_round` + 1. A `NEEDS_CONTEXT` from a `revision` dispatch is answered with a
+   `revision` re-dispatch carrying the same `feedback` plus `answers` (revision mode must
+   never regenerate the file). At `question_round: 2` the agent must draft, recording
+   anything still unknown as Open Questions and Assumptions.
 4. **`DONE` → client confirmation.** In ONE turn show the requirements path, the agent's
    summary, its counts (BR / VAL / AC / Open Q) and its list of questions still Open. Then
    ask with `AskUserQuestion`: **Approve requirements** | **Request changes**.
@@ -126,7 +129,9 @@ Dispatch `qa-placeholder` with `requirements` (the approved path, or `none`), `r
 (verbatim) and `repo_root`.
 
 - **`NEEDS_INPUT`** → relay its numbered questions to the client in ONE batched message and
-  re-dispatch with `answers`. At most 2 question rounds.
+  re-dispatch with `answers`. At most 2 question rounds. If the agent returns `NEEDS_INPUT`
+  a third time, do not relay it: record its questions in the ledger as `QA_OPEN:` and
+  continue to Stage 0.5.
 - **`DONE`** → record each returned path in the ledger as `QA_ARTIFACTS:`. No gate.
 - **`PLACEHOLDER`** → say `QA agent not yet implemented — skipping.` on the same turn as the
   Stage 0.5 question, and continue.
@@ -153,10 +158,11 @@ Regardless of the answers, the existing full test suite must pass before any PR
 
 `<source>` is the approved requirements file, `docs/features/<slug>.requirements.md`. If the
 ledger says `REQUIREMENTS: none`, `<source>` is any spec the client referenced instead; if
-there is none, skip to Stage 1.
+there is none, record `CONTRACT: none` in the ledger and skip to Stage 1.
 
 1. `wc -c -l <source>`. Estimate tokens as `chars / 3`.
-2. Under 4,000 tokens → pass the path directly, note it in the ledger, skip to Stage 1.
+2. Under 4,000 tokens → pass the path directly, note it in the ledger, skip to Stage 1. In
+   this case `<contract>` = `<source>`: the source file itself serves as the contract.
 3. Otherwise dispatch **one** `distiller` with `<source>` and the output path
    `<contract>` = `docs/features/<source stem>.contract.md`. For the requirements file that
    is `docs/features/<slug>.requirements.contract.md`. The name must be
@@ -164,7 +170,7 @@ there is none, skip to Stage 1.
    contract by filename stem.
 
 After this stage **only the `distiller` and the Stage-1 `planner` may read the original.**
-Everyone else reads the contract. Global Constraints must record:
+Everyone else reads the contract. When a contract exists, Global Constraints must record:
 
 ```
 Source of truth: <contract>
@@ -180,7 +186,10 @@ not as its own turn.
 ## Stage 1 — Plan (FEATURE track, sequential)
 
 Dispatch `planner` with: client request verbatim, `tier: full`, TDD/UNIT_TESTS flags, repo root,
-**contract path**, and paths to any files the client referenced. It works through
+the **contract path** (omit it when the ledger says `CONTRACT: none`), and, only when the
+ledger says `REQUIREMENTS: none`, paths to any files the client referenced. When
+requirements were approved, the planner gets the requirements file or its contract only: the
+approved requirements are the source of truth. It works through
 gstack /office-hours (framing) and gstack /spec (precision) alongside
 superpowers:brainstorming and superpowers:writing-plans.
 
@@ -209,6 +218,11 @@ grep -l 'design-surface: true' docs/plans/<slug>/task-*.md 2>/dev/null | xargs -
 [ -s docs/plans/<slug>/.review/design-slice.md ] || echo "No design surface in this plan." > docs/plans/<slug>/.review/design-slice.md
 wc -c docs/plans/<slug>/*.md docs/plans/<slug>/.review/*.md <contract>
 ```
+
+If the ledger says `CONTRACT: none`, leave `<contract>` out of the `wc -c` line and do NOT run
+the plan lint below. Record `LINT_SKIPPED: no source document` in the ledger. The completeness
+check still runs. When a contract exists, run the lint as written; passing `<source>` as the
+third argument is fine even when it equals `<contract>`.
 
 **Plan lint — run this BEFORE the completeness check and before any reviewer.** It catches the
 defect classes review keeps missing (fields declared but never written, upserts with no
@@ -303,7 +317,8 @@ list. Only `TASTE:` findings reach the client during the loops.
 
 Present in plain language, in ONE turn: short summary (what gets built, in what order,
 key decisions), the `00-overview.md` path, the contract's `UNCONFIRMED` items, any
-requirements Open Questions still Open (from Stage R's return), and an
+requirements Open Questions still Open (from Stage R's return; write "none reported" when
+Stage R returned none), and an
 `AskUserQuestion`: **Approve and build** | **Request changes**.
 
 In the SAME `AskUserQuestion` call, ask a second question — **Build mode.** State the task
