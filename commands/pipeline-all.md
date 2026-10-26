@@ -298,7 +298,8 @@ Sequential dispatch costs one extra turn per agent:
 - `design-reviewer` — gstack /plan-design-review, ONLY if `design-slice.md` contains
   tasks. If it says "no design surface", skip it — do not spend a dispatch confirming.
 
-Pass **the slice path and the contract path only.**
+Pass **the slice path and the contract path only** (just the slice path when the ledger says
+`CONTRACT: none`).
 
 Each returns `APPROVED`, or `CHANGES_REQUIRED` with numbered findings, **each citing task
 file + line range**. A finding without coordinates goes back to the reviewer, not forward
