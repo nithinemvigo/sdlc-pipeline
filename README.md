@@ -8,8 +8,8 @@ Built on top of **superpowers**, **gstack**, and **claude-mem** — all three ar
 
 | Component | Count | Purpose |
 |---|---|---|
-| Commands | 1 | `/pipeline` — the end-to-end orchestrator |
-| Agents | 14 | Specialist sub-agents: planner, investigator, implementer, reviewers (code, security, eng, design, CEO, perf), unit-tester, qa-tester, adr-writer, doc-writer, ship-pr |
+| Commands | 3 | `/pipeline` (features and bugs), `/pipeline-parallel` (parallel task waves), `/pipeline-all` (requirements-first, features only) |
+| Agents | 17 | Specialist sub-agents: requirements-writer and qa-placeholder (placeholders), distiller, planner, investigator, implementer, reviewers (code, security, eng, design, CEO), perf-tester, unit-tester, qa-tester, adr-writer, doc-writer, ship-pr |
 | Hooks | 2 | Token tracking and per-run token reports |
 
 The orchestrator never writes production code itself. It classifies your request, dispatches specialist agents, enforces quality gates, and only interrupts you for genuine decisions.
@@ -140,6 +140,16 @@ Bugs skip the planner: the `investigator` agent does root-cause analysis and pro
 
 Nano changes skip planning and reviews entirely: `implementer` → `code-reviewer` → `ship-pr`. Fast path, still reviewed.
 
+### Example 4 — start from an idea (requirements first)
+
+```
+/sdlc-pipeline:pipeline-all Let sales managers export filtered contact lists as CSV
+```
+
+`/pipeline-all` is for features only. It first turns your idea (text, or a file path such as `docs/ideas/export.md`) into a requirements document based on the plugin's template, and asks you only about major gaps. You approve the document or ask for changes. A QA step runs next, and from the testing questions onward the run is the same as Example 1.
+
+In this release the requirements and QA agents are placeholders: each reports "not yet implemented" and the run continues with your original request.
+
 ## Workflow
 
 ```
@@ -167,6 +177,21 @@ Stage 6    Ship PR (via gstack /ship)
 ```
 
 `∥` = stages run in parallel. Token usage is tracked per run by the bundled hooks.
+
+`/pipeline-all` runs a requirements-first version of the feature track:
+
+```
+idea (text and/or files)
+   │
+   ▼
+Stage -1   Preflight
+Stage 0    Bug guard (bugs → /pipeline)
+Stage R    Requirements (requirements-writer) ── ★ YOU APPROVE THE REQUIREMENTS ★
+Stage Q    QA slot (qa-placeholder), may ask you for input
+Stage 0.5  Your preferences: TDD, unit tests
+Stage 0.8  Distil requirements → contract
+Stage 1 →  Same as the FEATURE track above (plan, reviews, ★ plan approval ★, build, gates, ship)
+```
 
 ## Hard rules the pipeline enforces
 
