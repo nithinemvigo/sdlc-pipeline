@@ -1,5 +1,5 @@
 ---
-description: Requirements-first feature pipeline. Requirements doc (client approves) → QA slot → testing prefs → Plan → reviews → CLIENT APPROVES PLAN → Execute (TDD if requested) → Unit test → QA → Code+Security review → Docs → Ship PR. Features only — bugs use /pipeline.
+description: Requirements-first feature pipeline. Requirements doc (client approves) → BA requirements analysis → testing prefs → Plan → reviews → CLIENT APPROVES PLAN → Execute (TDD if requested) → Unit test → QA → Code+Security review → Docs → Ship PR. Features only — bugs use /pipeline.
 argument-hint: <feature idea text and/or file path(s)>
 ---
 
@@ -192,7 +192,7 @@ A request that is not clearly a bug gets no question.
      > remaining points as Open Questions, (b) keep revising, (c) restart from a tightened
      > brief.
 5. **`PLACEHOLDER`** → say `Requirements agent not yet implemented — continuing with the raw
-   request.` on the same turn as the Stage Q dispatch, record `REQUIREMENTS: none`, and go
+   request.` on the same turn as Stage Q, record `REQUIREMENTS: none`, and go
    to Stage Q. No gate. **`BLOCKED`** → the same, but say
    `Requirements agent blocked: <reason> — continuing with the raw request.`
    - **Exception:** if the client chose **Use the existing file**, or the run started from a
@@ -213,18 +213,18 @@ You do not read the requirements file. Everything you show the client comes from
 return, and the client opens the file themselves. Never start Stage Q without an approval,
 `(existing, unrevised)` or `REQUIREMENTS: none` in the ledger.
 
-## Stage Q — QA slot
+## Stage Q — BA requirements analysis
 
-Dispatch `qa-placeholder` with `requirements` (the approved or existing path, or `none`),
-`request` (verbatim) and `repo_root`.
+`<artifact root>` = `<directory of the REQUIREMENTS file>/ba/<its stem without .requirements>/`
+(e.g. `docs/features/emv/ba/02-campaigns/`).
 
-- **`NEEDS_INPUT`** → relay its numbered questions to the client in ONE batched message and
-  re-dispatch with `answers`. At most 2 question rounds. If the agent returns `NEEDS_INPUT`
-  a third time, do not relay it: record its questions in the ledger as `QA_OPEN:` and
-  continue to Stage 0.5.
-- **`DONE`** → record each returned path in the ledger as `QA_ARTIFACTS:`. No gate.
-- **`PLACEHOLDER`** → say `QA agent not yet implemented — skipping.` on the same turn as the
-  Stage 0.5 question, and continue.
+- `REQUIREMENTS: none` → say `No requirements file — skipping BA analysis.`, record `ba: skipped`, continue to Stage 0.5.
+- Otherwise invoke the skill `sdlc-pipeline:ba-run` with arguments
+  `--requirements <REQUIREMENTS path> --artifact-root <artifact root>`. It runs atomic requirements, gap analysis, gap triage with the client (one gap at a time; every Critical and High gap must be resolved) and development stories appended to the requirements file, then returns a last line `BA_STATUS: …`.
+- `BA_STATUS: PAUSED` or `BLOCKED` → record `ba: <artifact root> (paused | blocked)` and end the run with: "Your answers are saved. Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue — the BA analysis resumes where it stopped."
+- `BA_STATUS: COMPLETED` → record `ba: <artifact root> (completed)`. Then ask with `AskUserQuestion`: **Stop and resume in a fresh session (Recommended — lower cost)** | **Continue now**. The BA instructions stay in this session's context for every later turn. **Stop** ends the run with: "Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` in a new session — requirements and BA analysis are kept and skipped."
+  When `ba-run` reported that the BA analysis was already complete (a resumed run), do not
+  ask — continue to Stage 0.5.
 
 ## Stage 0.5 — Testing preferences (after Stage R and Stage Q)
 
@@ -284,6 +284,9 @@ The ledger value `CONTRACT: distilled | copied | none` records which case applie
    > `## Business rules`, `## Validation rules`, `## Acceptance criteria`,
    > `## Error & edge scenarios`, `## Non-functional`. For a requirements source these
    > sections override the "What stays out" list.
+   > Also keep every development story from the `# Development Stories` section, one line
+   > each: `US-xxx` · title · one line per acceptance criterion · source `REQ-` IDs, under
+   > `## Development stories`.
 
 **One guard rule for every later stage.** Wherever a later stage passes *the contract path*,
 omit it when `CONTRACT: none`. The contract's `UNCONFIRMED` items and distiller top-up apply
@@ -319,8 +322,9 @@ has `REQUIREMENTS: <path> (approved…)` or `(existing, unrevised)`:
   `CONTRACT: copied`, the contract already holds the same text — pass it alone. State that
   the approved requirements are the source of truth. The planner gets no raw client files.
 - Add to the dispatch: "Keep the overview's `FR-NN` traceability rows, but each FR row cites
-  the `BR-xxx` / `AC-xxx` IDs it covers, and every Must Have `BR-xxx` appears in at least one
-  FR row."
+  the `BR-xxx` / `AC-xxx` IDs it covers and the `US-xxx` stories it implements, every Must
+  Have `BR-xxx` appears in at least one FR row, and every `US-xxx` story appears in at least
+  one FR row."
 
 Otherwise (`REQUIREMENTS: none`) the planner works through
 gstack /office-hours (framing) and gstack /spec (precision) alongside
@@ -502,7 +506,8 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
    parts already merged. Verify a
    clean test baseline first. On every `/pipeline-all` run with a requirements file
    (written, approved, or approved earlier), commit them as the branch's first commit: `git add` the current requirements
-   file and, for a part, its sibling `<dir>/[0-9][0-9]-*.requirements.md` files; commit only if
+   file, for a part its sibling `<dir>/[0-9][0-9]-*.requirements.md` files, and the Stage Q
+   `<artifact root>` when it exists (`[ -d <artifact root> ] && git add <artifact root>`); commit only if
    something is staged
    (`git diff --cached --quiet || git commit -m "docs: requirements for <slug>"`).
    After a split this includes all parts, so later parts reach the base branch with this PR.
@@ -648,7 +653,7 @@ TOKEN LEDGER
   remaining_parts: <paths> | none   split_rounds: N / 2
   contract: distilled | copied | none
   requirements_dispatches: N   requirements_revisions: N / 4
-  qa_slot: DONE (<outputs>) | PLACEHOLDER   qa_input_rounds: N / 2
+  ba: <artifact root> (completed | paused | blocked | skipped)
   build_mode: <run to completion | checkpoint | per-task>
   planner_dispatches: N / 4
   reviewer_dispatches: N   implementer_dispatches: N
@@ -675,6 +680,7 @@ TOKEN LEDGER
   "Finish this part first (resume this branch), merge and deploy its PR, then run
   /sdlc-pipeline:pipeline-all <next part path>."
 - Never start Stage 0.5 before Stage R and Stage Q have finished.
+- Never start Stage 0.5 while `ba` is `paused` or `blocked`.
 - `/pipeline-all` runs features only. A clear bug request gets the Stage 0 redirect question.
 - Never skip a gate because a previous gate passed cleanly.
 - The full existing suite must pass before any PR, even with TDD and UNIT_TESTS off.
