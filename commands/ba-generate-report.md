@@ -6,7 +6,7 @@ allowed-tools: Read, Bash(python:*), Bash(python3:*), Bash(py:*)
 # BA Requirements — Generate Report (Phase 3)
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
 Rebuild `report/phase3-report.html` only. This command never rewrites the requirements document, renumbers or changes stories, edits `stories/story-generation-state.json`, or changes the gap register or any recorded decision. Use whichever of `python`, `python3`, `py` works; if none does, tell the user Python 3 is required and ask before doing anything else.
 

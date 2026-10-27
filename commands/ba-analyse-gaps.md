@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), 
 You orchestrate this command. Methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
 This phase identifies and prioritises gaps only. Do not record decisions, resolve gaps, write user stories or acceptance criteria, integrate with Jira, or modify the atomic requirements or any source document. Do not hand-write `gaps.json`, the state file or the HTML: every write goes through `scripts/gap-register-store.py`.
 
@@ -117,9 +117,9 @@ Only if the user explicitly asks to start over, or Step 2 requires it. Explain e
 ## Step 9 — Verify
 
 1. `python ${CLAUDE_PLUGIN_ROOT}/scripts/validate-gap-register.py <project root>/gaps/gaps.json` must pass.
-2. `gap-register-store.py inspect` must now report `UNCHANGED`.
+2. `gap-register-store.py inspect --project-root <project root>` must now report `UNCHANGED`.
 3. Confirm `gaps/gap-analysis.html` exists.
-4. `gap-register-store.py summary` gives the counts for the report.
+4. `gap-register-store.py summary --project-root <project root>` gives the counts for the report.
 
 ## Step 10 — Execution summary
 

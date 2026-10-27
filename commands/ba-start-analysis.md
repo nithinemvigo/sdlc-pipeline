@@ -8,7 +8,7 @@ allowed-tools: Read, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), Bash(py
 You orchestrate this command. Detailed methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
 This phase only analyses requirements and decomposes them into atomic requirements. Do not perform gap analysis, write user stories, integrate with Jira, enrich requirements, or modify any source document.
 

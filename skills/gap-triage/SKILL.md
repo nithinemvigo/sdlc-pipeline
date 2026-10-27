@@ -10,12 +10,12 @@ Follow `rules/gap-triage-rules.md` for statuses, transitions and decision histor
 Commands used below (each takes `--project-root <project root>`):
 
 ```text
-python <plugin-root>/scripts/gap-register-store.py list
-python <plugin-root>/scripts/gap-register-store.py resolve --gap-id GAP-001 --decision-file <file> [--revise]
-python <plugin-root>/scripts/gap-register-store.py skip --gap-id GAP-001
-python <plugin-root>/scripts/gap-register-store.py reopen --gap-id GAP-001
-python <plugin-root>/scripts/gap-register-store.py summary
-python <plugin-root>/scripts/gap-register-store.py regenerate-report
+python <plugin-root>/scripts/gap-register-store.py list --project-root <project root>
+python <plugin-root>/scripts/gap-register-store.py resolve --gap-id GAP-001 --decision-file <file> [--revise] --project-root <project root>
+python <plugin-root>/scripts/gap-register-store.py skip --gap-id GAP-001 --project-root <project root>
+python <plugin-root>/scripts/gap-register-store.py reopen --gap-id GAP-001 --project-root <project root>
+python <plugin-root>/scripts/gap-register-store.py summary --project-root <project root>
+python <plugin-root>/scripts/gap-register-store.py regenerate-report --project-root <project root>
 ```
 
 Each prints JSON with `ok`. Exit 0 = done, 1 = refused (nothing changed), 2 = I/O failure (nothing changed), 3 = register saved but the HTML report failed.

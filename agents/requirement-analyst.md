@@ -28,7 +28,7 @@ Read these files from the plugin root, in full, and follow them:
 
 ## Responsibilities
 
-- Read every confirmed source file completely. Read it in `offset`/`limit` chunks of at most 200 lines, continuing until a chunk returns fewer lines than requested — that is the end of the file. Never run `wc`, `stat` or `cat` on a Markdown file (this plugin's context-budget hook blocks it). Rules, skills and JSON files under 250 lines may be read in one call.
+- Read every confirmed source file completely. Read it in `offset`/`limit` chunks of at most 200 lines, continuing until a chunk returns fewer lines than requested, or none — that is the end of the file. Never run `wc`, `stat`, `du`, `cat`, `Get-Content` or `Measure-Object` on a Markdown file (this plugin's context-budget hook blocks it). Rules, skills and JSON files under 250 lines may be read in one call.
 - Understand the whole source set before decomposing it.
 - Identify business objectives and system expectations.
 - Identify functional and non-functional requirements.

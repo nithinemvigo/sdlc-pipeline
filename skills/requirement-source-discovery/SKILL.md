@@ -24,7 +24,7 @@ Then:
 
 1. **No match / path does not exist:** say so and ask for a valid location. Do not guess.
 2. **Several matches:** list every candidate with its full path and ask the user to choose. Never pick one silently.
-3. **Outside the project root:** an absolute path outside the project root is acceptable only after the user confirms they want it read.
+3. **Outside the project root:** an absolute path outside the project root is acceptable only after the user confirms they want it read. In pipeline mode (the master run command called with `--requirements`), that file is already confirmed — do not ask.
 4. **File that is not `.md`:** explain that Phase 1 supports only Markdown and ask for a `.md` source.
 
 ## 2. Discover files in a directory
@@ -38,10 +38,10 @@ Then:
 
 ## 3. Read each file completely
 
-1. Read with the Read tool. Read it in `offset`/`limit` chunks of at most 200 lines, continuing until a chunk returns fewer lines than requested — that is the end of the file. Never run `wc`, `stat` or `cat` on a Markdown file (this plugin's context-budget hook blocks it). Rules, skills and JSON files under 250 lines may be read in one call.
+1. Read with the Read tool. Read it in `offset`/`limit` chunks of at most 200 lines, continuing until a chunk returns fewer lines than requested, or none — that is the end of the file. Never run `wc`, `stat`, `du`, `cat`, `Get-Content` or `Measure-Object` on a Markdown file (this plugin's context-budget hook blocks it). Rules, skills and JSON files under 250 lines may be read in one call.
 2. Do not stop after the first chunk. The total line count is the last line number read once the end of the file is reached.
 3. Read the whole file: headings, lists, tables, code blocks, quotes. Nothing is skipped because it looks unimportant.
-4. If a file has very long lines that the tool truncates, read those lines another way (for example with Grep or a shell command) so no text is lost.
+4. If a file has very long lines that the tool truncates, use `Grep` for the specific text so no text is lost.
 5. Record for each file: absolute path, total lines, lines read, status.
 
 ## 4. Detect problems

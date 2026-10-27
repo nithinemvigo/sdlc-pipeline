@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), 
 You orchestrate this command. Methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
 Enrichment is incremental: only the stories a newly resolved or revised decision materially affects change. Never regenerate all stories, never decide a gap, never treat an open or skipped gap as a decision. Do not hand-edit the document, the state or the report; everything goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works.
 
@@ -66,7 +66,7 @@ Save the `pending_decisions` from `inspect` to `<temp>/pending.json` (Write tool
 
 ## Step 6 — Run the Story Generation Agent in `enrich` mode
 
-Invoke `sdlc-pipeline:story-generation-agent` with: the plugin root, mode `enrich`, the atomic requirements path, the gap register path, the draft path `<temp>/draft.json`, the export path, the pending file, the reopened-gap choices, and the instruction to follow the story-enrichment skill and return its final report format.
+Invoke `sdlc-pipeline:story-generation-agent` with: the plugin root, the artifact root (passed as `--project-root` to every script), mode `enrich`, the atomic requirements path, the gap register path, the draft path `<temp>/draft.json`, the export path, the pending file, the reopened-gap choices, and the instruction to follow the story-enrichment skill and return its final report format.
 
 - `NEW_STORY_PROPOSALS`: put each to the user with AskUserQuestion (the proposed story and why it does not belong in an existing story). Re-invoke with the answers; a story is only added when the user agrees.
 - `NEEDS_DECISION`: ask, then re-invoke.

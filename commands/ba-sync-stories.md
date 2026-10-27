@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, AskUserQuestion, Bash(python:*), Bash(py
 You detect and reconcile changes made outside the plugin. You never silently replace a manual change: anything that could overwrite or discard the user's edits is put to the user first.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
 Do not rewrite stories, decide gaps or edit the requirements. This command records accepted manual edits in the story state (the document is not touched) and refreshes the report. Every read and write goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works.
 

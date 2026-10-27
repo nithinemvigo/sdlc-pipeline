@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), 
 You orchestrate this command. Methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
 Stories are generated from the requirements known now, even when gaps are open or skipped. Never decide an open gap. Do not touch the atomic requirements or the gap register. Do not hand-edit the requirements document, `stories/story-generation-state.json` or `report/phase3-report.html`: every read and write goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works; if none does, tell the user Python 3 is required and ask before doing anything else.
 
@@ -78,7 +78,7 @@ python -c "import tempfile; print(tempfile.mkdtemp(prefix='ba-stories-'))"
 
 ## Step 5 — Run the Story Generation Agent
 
-Invoke the `sdlc-pipeline:story-generation-agent` agent. Its prompt must include: the plugin root, the mode, the atomic requirements path, the gap register path (or "none/ignored"), the draft path `<temp>/draft.json`, for `reconcile` the export path and the relevant `inspect` findings (added, changed, removed requirements; uncovered requirements; stories edited by hand), and the instruction to follow its files and return its final report format.
+Invoke the `sdlc-pipeline:story-generation-agent` agent. Its prompt must include: the plugin root, the artifact root (passed as `--project-root` to every script), the mode, the atomic requirements path, the gap register path (or "none/ignored"), the draft path `<temp>/draft.json`, for `reconcile` the export path and the relevant `inspect` findings (added, changed, removed requirements; uncovered requirements; stories edited by hand), and the instruction to follow its files and return its final report format.
 
 If it reports `INCOMPLETE` or a failed validator, re-invoke it with the specific problem or tell the user what is missing. If it reports `NEEDS_DECISION` or `NEW_STORY_PROPOSALS`, put each question to the user with AskUserQuestion, then re-invoke with the answers.
 
