@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Development Stories Draft",
+  "description": "Internal structured representation used while generating, enriching and validating development stories. The user-facing artifact is the '# Development Stories' Markdown section; individual stories there carry only Story ID, Summary, Detailed Description and Acceptance Criteria. Requirement and gap mappings are kept in stories/story-generation-state.json and are derived or recorded by scripts/sync-development-stories.py, never written into a story.",
+  "type": "object",
+  "properties": {
+    "stories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "story_id": {
+            "description": "The existing ID for a story that is already in the document; null (or absent) for a genuinely new story. IDs for new stories are assigned by the sync script, never by the agent.",
+            "type": ["string", "null"],
+            "pattern": "^US-[0-9]{3,}$"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "description": {
+            "description": "Plain paragraphs separated by a blank line; the 'As a ..., I want ..., so that ...' form where it fits.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "acceptance_criteria": {
+            "description": "Without numbering or bullets; numbering is added when the story is written.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "source_requirement_ids": {
+            "description": "Atomic requirements this story is built from. Stored in the internal state only.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^REQ-[0-9]{3,}$"
+            }
+          },
+          "applied_decisions": {
+            "description": "IDs of resolved gaps whose latest recorded decision is reflected in this story. Stored in the internal state only.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^GAP-[0-9]{3,}$"
+            }
+          }
+        },
+        "required": ["summary", "description", "acceptance_criteria", "source_requirement_ids"],
+        "additionalProperties": false
+      }
+    },
+    "not_covered_requirements": {
+      "description": "Atomic requirements that are deliberately not turned into a story, each with the reason.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "requirement_id": {
+            "type": "string",
+            "pattern": "^REQ-[0-9]{3,}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
+        },
+        "required": ["requirement_id", "reason"],
+        "additionalProperties": false
+      }
+    },
+    "decisions_reviewed": {
+      "description": "Resolved-gap decisions examined in this run. Only these advance the incorporation ledger. 'incorporated' needs a story listing the gap in applied_decisions; 'no_change_required' records an explicit determination that no story changes.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "gap_id": {
+            "type": "string",
+            "pattern": "^GAP-[0-9]{3,}$"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": ["incorporated", "no_change_required"]
+          }
+        },
+        "required": ["gap_id", "outcome"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["stories"],
+  "additionalProperties": false
+}
