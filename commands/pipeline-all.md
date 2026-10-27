@@ -88,14 +88,23 @@ A request that is not clearly a bug gets no question.
 
 ## Stage R — Requirements (HARD GATE)
 
-1. **Slug and path.** Derive `<slug>` from the request (kebab-case, at most 5 words). The
-   requirements path is `docs/features/<slug>.requirements.md`. Check for it in one Bash call
-   that also removes any stale contract (Stage 0.8 re-creates it; an old contract would make
-   the context-budget hook redirect agents away from the new requirements):
-   `ls docs/features/<slug>.requirements.md 2>/dev/null; rm -f docs/features/<slug>.requirements.contract.md`.
-   If the file already exists, ask once: **Use the existing file** (show only its path — you
-   do not read the file — and ask the step-4 question; the summary, counts and Open Questions are not available) |
-   **Regenerate** (overwrite it).
+1. **Slug and path.** Stale contracts are removed in the same Bash call as each check below
+   (Stage 0.8 re-creates them; an old contract would make the context-budget hook redirect
+   agents away from the new requirements).
+   - **The request is a path to an existing `*.requirements.md`** (for example the next part
+     of a split feature): do not dispatch the writer. One Bash call:
+     `ls <path> <dir>/00-shared.requirements.md 2>/dev/null; rm -f <dir>/<stem>.contract.md`.
+     Record `<path>`, and `REQUIREMENTS_SHARED: <dir>/00-shared.requirements.md` when it
+     exists. Go to the step-4 question showing only the path — you do not read the file; the
+     summary, counts and Open Questions are not available.
+   - **Otherwise** derive `<slug>` from the request (kebab-case, at most 5 words). The
+     single-file path is `docs/features/<slug>.requirements.md`; the split folder is
+     `docs/features/<slug>/`. One Bash call:
+     `ls -d docs/features/<slug>.requirements.md docs/features/<slug>/*.requirements.md 2>/dev/null; rm -f docs/features/<slug>.requirements.contract.md docs/features/<slug>/*.contract.md`.
+     If anything exists, ask once: **Use the existing file** (for a split folder, ask which
+     part; show only its path — you do not read the file — record the shared file as above,
+     and ask the step-4 question; the summary, counts and Open Questions are not available) |
+     **Regenerate** (delete the listed files in one Bash call, then dispatch the writer).
 2. **Dispatch `requirements-writer`** with:
    - `mode: draft`, `question_round: 0`
    - `request`: the client request, verbatim
@@ -104,7 +113,8 @@ A request that is not clearly a bug gets no question.
      printed. If it printed `unset`, find the template with one Glob for
      `**/templates/requirements-template.md` under `~/.claude/plugins`; if none, pass
      `template: unavailable`, note it in the ledger, and continue — never HALT here.
-   - `output`: the requirements path
+   - `output`: the single-file path
+   - `output_dir`: the split folder
    - `repo_root`
 3. **`NEEDS_CONTEXT`** → relay its numbered questions to the client in ONE batched message,
    then re-dispatch in the same mode the agent was dispatched in, with `answers` and
@@ -114,15 +124,27 @@ A request that is not clearly a bug gets no question.
    (revision mode must never regenerate the file). At `question_round: 2` the agent must
    write (draft) or apply (revision) without further questions, recording anything still
    unknown as Open Questions and Assumptions.
-4. **`DONE` → client confirmation.** In ONE turn show the requirements path, the agent's
-   summary, its counts (BR / VAL / AC / Open Q) and its list of questions still Open. Then
-   ask with `AskUserQuestion`: **Approve requirements** | **Request changes**.
-   - **Approve requirements** → mark the file approved in one Bash call, without reading it:
-     `sed -i 's/^| Status | Draft |/| Status | Approved |/' <path>`.
+
+   **`SPLIT_PROPOSAL`** → the agent judged the feature too big for one run and wrote nothing
+   yet. In ONE turn show its `parts`, `order` and `shared` lines, then ask with
+   `AskUserQuestion`: **Approve split** | **Keep as one file** | **Change the split**.
+   - **Approve split** → re-dispatch in `draft` mode with `approved_split` = the parts list
+     verbatim, plus the same `request`, `input_files`, `template`, `output`, `output_dir`,
+     `repo_root` and the cumulative `answers`.
+   - **Keep as one file** → re-dispatch the same way with `approved_split: one-file`.
+   - **Change the split** → re-dispatch the same way with the client's words as
+     `split_feedback`. Count these in `split_rounds`; after 2, offer only **Approve split** |
+     **Keep as one file**.
+4. **`DONE` → client confirmation.** In ONE turn show each returned path with its counts
+   (BR / VAL / AC / Open Q), the agent's summary and its list of questions still Open. Then
+   ask ONE `AskUserQuestion` covering all files: **Approve requirements** | **Request changes**.
+   - **Approve requirements** → mark every file approved in one Bash call, without reading
+     them: `sed -i 's/^| Status | Draft |/| Status | Approved |/' <path> [<path> …]`.
    - **Request changes** → take the client's feedback verbatim and re-dispatch in
-     `revision` mode with `feedback`, `question_round: 0`, the cumulative `answers`, plus
-     the same `request`, `input_files`, `template`, `output` and `repo_root`. Return to this
-     step.
+     `revision` mode with `feedback`, `files` (every requirements path in play, including
+     `REQUIREMENTS_SHARED`), `question_round: 0`, the cumulative `answers`, plus the same
+     `request`, `input_files`, `template`, `output`, `output_dir` and `repo_root`. Return to
+     this step.
    - Count each revision in `requirements_revisions`. **At 4, stop** and say:
 
      > We've revised the requirements 4 times. Options: (a) approve as-is and keep the
@@ -130,14 +152,18 @@ A request that is not clearly a bug gets no question.
      > brief.
 5. **`PLACEHOLDER`** → say `Requirements agent not yet implemented — continuing with the raw
    request.` on the same turn as the Stage Q dispatch, record `REQUIREMENTS: none`, and go
-   to Stage Q. No gate.
+   to Stage Q. No gate. **`BLOCKED`** → the same, but say
+   `Requirements agent blocked: <reason> — continuing with the raw request.`
    - **Exception:** if the client chose **Use the existing file** and a later `revision`
      dispatch returns `PLACEHOLDER`, keep the file: record
      `REQUIREMENTS: <path> (existing, unrevised)`, tell the client in one line that their
      changes could not be applied because the requirements agent is not implemented yet, and
      continue to Stage Q.
 6. Ledger: `REQUIREMENTS: <path> (approved, revisions: N)`,
-   `REQUIREMENTS: <path> (existing, unrevised)` or `REQUIREMENTS: none`.
+   `REQUIREMENTS: <path> (existing, unrevised)` or `REQUIREMENTS: none`. After a split,
+   `<path>` is part 1 and the entry reads `(approved, part 1 of N, revisions: N)`; also
+   record `REQUIREMENTS_SHARED: <shared path>` and `REMAINING_PARTS: <part 2…N paths>`.
+   **One part per run** — the rest of this run builds part 1 only.
 
 You do not read the requirements file. Everything you show the client comes from the agent's
 return, and the client opens the file themselves. Never start Stage Q without an approval,
@@ -145,8 +171,8 @@ return, and the client opens the file themselves. Never start Stage Q without an
 
 ## Stage Q — QA slot
 
-Dispatch `qa-placeholder` with `requirements` (the approved or existing path, or `none`), `request`
-(verbatim) and `repo_root`.
+Dispatch `qa-placeholder` with `requirements` (the approved or existing path, or `none`),
+`shared` (the `REQUIREMENTS_SHARED` path, when set), `request` (verbatim) and `repo_root`.
 
 - **`NEEDS_INPUT`** → relay its numbered questions to the client in ONE batched message and
   re-dispatch with `answers`. At most 2 question rounds. If the agent returns `NEEDS_INPUT`
@@ -176,33 +202,50 @@ Regardless of the answers, the existing full test suite must pass before any PR
 
 ## Stage 0.8 — Distil the requirements (MANDATORY when a source document exists)
 
-`<source>` is the requirements file, `docs/features/<slug>.requirements.md`, when the ledger
-says `REQUIREMENTS: <path> (approved…)` or `(existing, unrevised)` — treat both the same. If
-the ledger says `REQUIREMENTS: none`, `<source>` is any spec the client referenced instead; if
-there is none, record `CONTRACT: none` in the ledger and skip to Stage 1.
+`<source>` is the requirements file recorded in the ledger (`docs/features/<slug>.requirements.md`,
+or the current part's file after a split) when the ledger says `REQUIREMENTS: <path> (approved…)`
+or `(existing, unrevised)` — treat both the same. `<shared>` is the `REQUIREMENTS_SHARED` file
+when set; it travels with `<source>` everywhere below. If the ledger says
+`REQUIREMENTS: none`, `<source>` is any spec the client referenced instead; if there is none,
+record `CONTRACT: none` in the ledger and skip to Stage 1. `<contract dir>` is the directory of
+`<source>` for a requirements file, otherwise `docs/features`.
 
 The ledger value `CONTRACT: distilled | copied | none` records which case applies.
 
-1. One Bash call measures the source and, when it is small, copies it to the contract path.
-   Estimate tokens as `chars / 3` (12,000 chars ≈ 4,000 tokens):
+1. One Bash call measures the source (with `<shared>` when set) and, when it is small,
+   copies it to the contract path. Estimate tokens as `chars / 3` (12,000 chars ≈ 4,000
+   tokens). Without `<shared>`:
 
    ```bash
    wc -c -l <source>
    if [ "$(wc -c < <source>)" -lt 12000 ]; then
-     mkdir -p docs/features && cp <source> docs/features/<source stem>.contract.md && echo "CONTRACT: copied"
+     mkdir -p <contract dir> && cp <source> <contract dir>/<source stem>.contract.md && echo "CONTRACT: copied"
+   fi
+   ```
+
+   With `<shared>`, the copy is the shared text followed by the part. Use `cp` then
+   `tail -n +1 … >>`, never `cat`: the hook blocks `cat` on long Markdown even into a file,
+   and this writes to the file only — nothing enters your context:
+
+   ```bash
+   wc -c -l <shared> <source>
+   if [ "$(( $(wc -c < <shared>) + $(wc -c < <source>) ))" -lt 12000 ]; then
+     cp <shared> <contract dir>/<source stem>.contract.md && tail -n +1 <source> >> <contract dir>/<source stem>.contract.md && echo "CONTRACT: copied"
    fi
    ```
 
 2. Under 4,000 tokens → that call made the copy. Record `CONTRACT: copied`; `<contract>` =
-   `docs/features/<source stem>.contract.md`. Skip to Stage 1. Wherever a stage passes the
+   `<contract dir>/<source stem>.contract.md`. Skip to Stage 1. Wherever a stage passes the
    contract path, pass the copy, not `<source>`: reviewers may read only slices and
    `*.contract.md` files.
 3. Otherwise dispatch **one** `distiller` with `<source>` and the output path
-   `<contract>` = `docs/features/<source stem>.contract.md`, and record `CONTRACT: distilled`.
-   For the requirements file that is `docs/features/<slug>.requirements.contract.md`. The name
-   must be `<source stem>.contract.md` (copied or distilled), because the context-budget hook
-   links an original to its contract by filename stem. When `<source>` is the requirements
-   file, add this to the dispatch:
+   `<contract>` = `<contract dir>/<source stem>.contract.md`, and record `CONTRACT: distilled`.
+   For a single requirements file that is `docs/features/<slug>.requirements.contract.md`; for
+   a part it sits beside the part. The name must be `<source stem>.contract.md` (copied or
+   distilled), because the context-budget hook links an original to its contract by filename
+   stem. When `<shared>` is set, tell the distiller to read it as well and fold its roles,
+   shared rules, security and non-functional rows into the same contract. When `<source>` is
+   a requirements file, add this to the dispatch:
 
    > Requirements mode. In addition to the standard sections, keep, one line each and with no
    > row cap: every `BR-xxx` (id · rule · priority), every `VAL-xxx` (id · field · rule), every
@@ -239,15 +282,17 @@ the **contract path** (omit it when the ledger says `CONTRACT: none`), and, only
 ledger says `REQUIREMENTS: none`, paths to any files the client referenced. When the ledger
 has `REQUIREMENTS: <path> (approved…)` or `(existing, unrevised)`:
 
-- When `CONTRACT: distilled`, also pass `<source>`, the approved requirements file, labelled
-  explicitly as the original the planner may read (Feature mode). When `CONTRACT: copied`,
-  the contract is the same text — pass it alone. State that the approved requirements are
-  the source of truth. The planner gets no raw client files.
+- Dispatch the planner in **Approved-requirements mode**: the client already approved the
+  requirements, so it skips gstack /office-hours and superpowers:brainstorming.
+- When `CONTRACT: distilled`, also pass `<source>`, the approved requirements file — and
+  `<shared>` when set — labelled explicitly as the originals the planner may read. When
+  `CONTRACT: copied`, the contract already holds the same text — pass it alone. State that
+  the approved requirements are the source of truth. The planner gets no raw client files.
 - Add to the dispatch: "Keep the overview's `FR-NN` traceability rows, but each FR row cites
   the `BR-xxx` / `AC-xxx` IDs it covers, and every Must Have `BR-xxx` appears in at least one
   FR row."
 
-The planner works through
+Otherwise (`REQUIREMENTS: none`) the planner works through
 gstack /office-hours (framing) and gstack /spec (precision) alongside
 superpowers:brainstorming and superpowers:writing-plans.
 
@@ -548,8 +593,10 @@ results, and the TDD/UNIT_TESTS flags for the PR body. It runs gstack /ship ONLY
 and opens the PR).
 
 Report in <10 lines: what shipped, PR link, test summary, anything deferred, final ledger
-line. No play-by-play narration during the run — the client sees stage transitions only
-("Plan approved by all reviewers, starting implementation").
+line. If `REMAINING_PARTS` is not empty, end with the next part and its command:
+`/sdlc-pipeline:pipeline-all <next part path>`. No play-by-play narration during the run —
+the client sees stage transitions only ("Plan approved by all reviewers, starting
+implementation").
 
 ## Token ledger
 
@@ -557,7 +604,8 @@ Update after every stage. Keep it in the ledger, not in prose to the client.
 
 ```
 TOKEN LEDGER
-  requirements: <path> (approved, revisions: N) | <path> (existing, unrevised) | none
+  requirements: <path> (approved[, part K of N], revisions: N) | <path> (existing, unrevised) | none
+  requirements_shared: <path> | none   remaining_parts: <paths> | none   split_rounds: N / 2
   contract: distilled | copied | none
   requirements_dispatches: N   requirements_revisions: N / 4
   qa_slot: DONE (<outputs>) | PLACEHOLDER   qa_input_rounds: N / 2
@@ -581,6 +629,8 @@ TOKEN LEDGER
 - Never commit directly to main/master.
 - Never start implementation before explicit client approval (Stage 2.5).
 - Never skip the Stage R client confirmation when `requirements-writer` returned `DONE`.
+- One requirements part per run. After a split, build part 1 and give the client the command
+  for the next part.
 - Never start Stage 0.5 before Stage R and Stage Q have finished.
 - `/pipeline-all` runs features only. A clear bug request gets the Stage 0 redirect question.
 - Never skip a gate because a previous gate passed cleanly.
