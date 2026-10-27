@@ -1,7 +1,7 @@
 # `requirements-writer` agent — real implementation — Design
 
 - **Date:** 2026-10-27
-- **Status:** Draft — awaiting review
+- **Status:** Revision 2 — awaiting review. **§11 supersedes** the shared-file design in §2 (D9, D10), §4 (threshold), §5, §6 and §8 wherever they conflict.
 - **Builds on:** `docs/superpowers/specs/2026-10-26-pipeline-all-design.md` (same branch, `feature/pipeline-all`, still unreleased as 3.2.0 — no further version bump)
 - **Author:** Muhassin (with Claude)
 
@@ -175,3 +175,66 @@ Prompts cannot be unit-tested, so verification is structural plus a manual run:
 
 PDF / Word input; the QA agent; running several parts in one session; changes to `/pipeline`
 or `/pipeline-parallel`.
+
+## 11. Revision 2 — independent parts (2026-10-27)
+
+Decided with the client after the whole-branch review. This section wins over §2–§8 where
+they conflict.
+
+### 11.1 Each part is its own deliverable
+
+- **No shared file.** `00-shared.requirements.md` is dropped. Every part file is complete on
+  its own: purpose, users and roles, rules, security, non-functional needs and acceptance
+  criteria are repeated in each part where relevant — never "see another file".
+- **Splitting rule.** Split only into parts that can each be **built, pushed and deployed on
+  their own**. A part may use what an **earlier, already-deployed** part shipped (for
+  example part 2 uses the login part 1 delivered) and says so in §21 Dependencies; it never
+  depends on a later part, and no two parts are needed together for anything to work. If the
+  feature cannot be cut that way, it stays one file.
+- **Threshold** (guide, both conditions still required): more than ~40 acceptance criteria
+  or more than ~10 user journeys. Minimum part size ~8 acceptance criteria.
+- **Files:** `docs/features/<slug>/NN-<part>.requirements.md`; NN is the deploy order; part N
+  keeps the ID range N01–N99.
+
+### 11.2 Flow
+
+- One part per run. Every run that ends with parts remaining (Stage 6, or any "Stop here")
+  ends with: *"Once this PR is merged and deployed, run
+  `/sdlc-pipeline:pipeline-all <next part path>`."*
+- Starting a part run checks, without reading files, whether an earlier part's branch
+  (`feature/<feature folder>-<lower NN>-*`) exists and is not merged into the base branch, and
+  if so asks **Continue anyway** | **Stop**.
+- A part already marked `| Status | Approved |` is not asked for approval again.
+- Stage 3 commits the approved requirements files (all parts) as the branch's first commit,
+  so later parts reach the base branch with the first PR.
+- **"Change the split"** re-dispatches with `previous_proposal` (the last `parts` / `order`
+  lines, verbatim) and the cumulative `split_feedback`, at `question_round: 2`.
+
+### 11.3 Contract changes
+
+- Agent inputs: add `previous_proposal`; `split_feedback` is cumulative.
+- Agent returns: drop `shared`; `order` = deploy order plus what each part uses from earlier
+  parts.
+- Orchestrator: remove `REQUIREMENTS_SHARED`, the shared+part contract copy, and every
+  "shared" clause in Stages R, Q, 0.8 and 1. Increment `requirements_dispatches` on every
+  writer dispatch. Stage 2.5 says "not available (existing file)" when Stage R returned
+  nothing. `part K of P` applies only to part files.
+- Planner: drop the `00-shared` mention from Approved-requirements mode.
+- Template comment: each part is complete on its own; earlier-part reliance goes in §21.
+
+### 11.4 Hook fix (`hooks/guard_context_budget.py`)
+
+`contract_beside` falls back to a loose match when no exact `<stem>.contract.md` exists: a
+contract counts as the original's if one normalised stem contains the other and the
+**contract's** stem is at least 12 characters. Every requirements contract ends in
+`requirements` (12 characters), so short, unrelated names now match — e.g. reading
+`csv-export.requirements.md` is blocked in favour of an older
+`export.requirements.contract.md`, and `docs/auth.md` in favour of
+`user-auth.requirements.contract.md`. This can stop the requirements agent editing its own
+file in a revision.
+
+**Fix:** before the loose compare, strip a trailing `.requirements` from both stems, and
+require **both** normalised stems to be at least 12 characters. Exact-stem matches are
+unchanged. Verified with a test that imports the hook and checks: the four false matches
+above no longer match; an exact `<stem>.contract.md` still matches; and a long renamed
+contract (the distiller-shortening case the fallback exists for) still matches.
