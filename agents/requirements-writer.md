@@ -45,7 +45,7 @@ commit, and do not invoke any skill they hand off to. `revision` mode loads no s
 | `mode` | `draft` or `revision` |
 | `request` | the client's request, verbatim |
 | `input_files` | `.md` / `.txt` paths the client referenced, or `none` (both modes) |
-| `template` | path to `templates/requirements-template.md` in the plugin, or `unavailable` |
+| `template` | path to `templates/requirements-template.md` in the plugin, or `unavailable (home: <path>)` |
 | `output` | single-file path `docs/features/<slug>.requirements.md` |
 | `output_dir` | split folder `docs/features/<slug>/` |
 | `repo_root` | repository root |
@@ -62,9 +62,9 @@ if it is the only source of the idea, ask for a Markdown or text version (a majo
 
 ## Draft mode
 
-1. **Read.** The template, once. If `template` is `unavailable`, run one Glob for
-   `**/templates/requirements-template.md` with its path set to the absolute `.claude/plugins`
-   folder in the user's home directory (Glob does not expand `~`); if none is found,
+1. **Read.** The template, once. If `template` starts with `unavailable`, run one Glob for
+   `**/templates/requirements-template.md` with its path set to `<home>/.claude/plugins`,
+   using the home path given in parentheses (Glob does not expand `~`); if none is found,
    return `BLOCKED` with the reason. Then each input file, in chunks. Then targeted code
    reads: existing roles and permissions, screens, data and integrations the idea touches.
 2. **Major gaps.** Check the idea against: its purpose; who uses it; what is in and out of
