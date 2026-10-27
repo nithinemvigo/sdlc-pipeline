@@ -259,7 +259,9 @@ def contract_beside(path: str):
             if not e.endswith(CONTRACT_SUFFIX):
                 continue
             other = _loose_key(e[: -len(CONTRACT_SUFFIX)])
-            if len(other) >= 12 and len(norm) >= 12 and (other in norm or norm in other):
+            # contract stem >= 12 (a long slug), original stem >= 8 (a short spec name such as
+            # `payments` still matches `payments-refund-flow`; `auth`/`export` do not)
+            if len(other) >= 12 and len(norm) >= 8 and (other in norm or norm in other):
                 return os.path.join(d, e) if d else e
     return None
 

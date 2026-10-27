@@ -70,6 +70,14 @@ class ContractBesideTest(unittest.TestCase):
         self.touch("docs/auth.md")
         self.assertIsNone(guard.contract_beside("docs/auth.md"))
 
+    def test_short_spec_name_matches_long_slug_contract(self):
+        self.touch("docs/features/payments-refund-flow.contract.md")
+        self.touch("docs/payments.md")
+        self.assertEqual(
+            os.path.normpath(guard.contract_beside("docs/payments.md")),
+            os.path.normpath("docs/features/payments-refund-flow.contract.md"),
+        )
+
     def test_long_renamed_requirements_contract_still_matches(self):
         self.touch("docs/features/user-authentication.requirements.contract.md")
         self.touch("docs/features/user-authentication-flow.requirements.md")
