@@ -6,4 +6,4 @@
 node_modules/
 .vscode/
 triage/
-hooks/*.log
+hooks/*.log__pycache__/

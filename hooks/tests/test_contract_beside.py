@@ -65,6 +65,19 @@ class ContractBesideTest(unittest.TestCase):
             os.path.normpath("docs/features/user-authentication-flow.contract.md"),
         )
 
+    def test_short_original_inside_long_contract_is_not_shadowed(self):
+        self.touch("docs/features/user-authentication-flow.contract.md")
+        self.touch("docs/auth.md")
+        self.assertIsNone(guard.contract_beside("docs/auth.md"))
+
+    def test_long_renamed_requirements_contract_still_matches(self):
+        self.touch("docs/features/user-authentication.requirements.contract.md")
+        self.touch("docs/features/user-authentication-flow.requirements.md")
+        self.assertEqual(
+            os.path.normpath(guard.contract_beside("docs/features/user-authentication-flow.requirements.md")),
+            os.path.normpath("docs/features/user-authentication.requirements.contract.md"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
