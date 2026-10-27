@@ -102,7 +102,7 @@ checkpoint (`<artifact root>/.ba-requirements/pipeline-state.json`) — runs nev
 | Stage | Change |
 |---|---|
 | Q | Replace the `qa-placeholder` dispatch: invoke the skill `sdlc-pipeline:ba-run` with `--requirements <REQUIREMENTS path> --artifact-root <artifact root>`. Skip Stage Q (one line) when `REQUIREMENTS: none`. On `PAUSED`/`BLOCKED`: stop the run with "Your answers are saved. Run `/sdlc-pipeline:pipeline-all <requirements path>` to continue — the BA analysis resumes where it stopped." On completion: record `BA: <artifact root> (completed)`, then ask **Continue now** \| **Stop and resume in a fresh session (Recommended — lower cost)**, because the BA files stay in this session's context for every later turn. |
-| 0.8 | Requirements-mode distiller dispatch also keeps every development story: `US-xxx` · title · one line per acceptance criterion · source `REQ-` IDs, under `## Development stories`. The size check runs on the file **with** stories. |
+| 0.8 | Requirements-mode distiller dispatch also keeps every development story: `US-xxx` · summary · one line per acceptance criterion (stories in the file carry no `REQ-` IDs), under `## Development stories`. The size check runs on the file **with** stories. |
 | 1 | Planner dispatch: FR rows cite the `US-xxx` stories (and `BR-`/`AC-` IDs) they implement; every story appears in at least one FR row. |
 | 3 | The requirements commit also adds `<artifact root>` (gap register, decisions, stories state, report). |
 | Ledger | `qa_slot` → `ba: <artifact root> (completed \| paused \| blocked \| skipped)`. |

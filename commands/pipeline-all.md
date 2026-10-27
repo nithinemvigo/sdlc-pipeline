@@ -221,10 +221,10 @@ return, and the client opens the file themselves. Never start Stage Q without an
 - `REQUIREMENTS: none` → say `No requirements file — skipping BA analysis.`, record `ba: skipped`, continue to Stage 0.5.
 - Otherwise invoke the skill `sdlc-pipeline:ba-run` with arguments
   `--requirements <REQUIREMENTS path> --artifact-root <artifact root>`. It runs atomic requirements, gap analysis, gap triage with the client (one gap at a time; every Critical and High gap must be resolved) and development stories appended to the requirements file, then returns a last line `BA_STATUS: …`.
-- `BA_STATUS: PAUSED` or `BLOCKED` → record `ba: <artifact root> (paused | blocked)` and end the run with: "Your answers are saved. Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue — the BA analysis resumes where it stopped."
-- `BA_STATUS: COMPLETED` → record `ba: <artifact root> (completed)`. Then ask with `AskUserQuestion`: **Stop and resume in a fresh session (Recommended — lower cost)** | **Continue now**. The BA instructions stay in this session's context for every later turn. **Stop** ends the run with: "Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` in a new session — requirements and BA analysis are kept and skipped."
-  When `ba-run` reported that the BA analysis was already complete (a resumed run), do not
-  ask — continue to Stage 0.5.
+- `BA_STATUS: PAUSED` → record `ba: <artifact root> (paused)` and end the run with: "Your answers are saved. Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue — the BA analysis resumes where it stopped."
+- `BA_STATUS: BLOCKED`, or no `BA_STATUS` line → record `ba: <artifact root> (blocked)` and end the run with: "The BA analysis stopped (reason above). Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue from where it stopped."
+- Stage R and Stage Q stops end with their own line only — never the next-part line.
+- `BA_STATUS: COMPLETED` → record `ba: <artifact root> (completed)`. If `ba-run` reported that the BA analysis was already complete (a resumed run), do not ask — continue to Stage 0.5. Otherwise ask with `AskUserQuestion`: **Stop and resume in a fresh session (Recommended — lower cost)** | **Continue now**. The BA instructions stay in this session's context for every later turn. **Stop** ends the run with: "Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` in a new session — requirements and BA analysis are kept and skipped."
 
 ## Stage 0.5 — Testing preferences (after Stage R and Stage Q)
 
@@ -285,7 +285,7 @@ The ledger value `CONTRACT: distilled | copied | none` records which case applie
    > `## Error & edge scenarios`, `## Non-functional`. For a requirements source these
    > sections override the "What stays out" list.
    > Also keep every development story from the `# Development Stories` section, one line
-   > each: `US-xxx` · title · one line per acceptance criterion · source `REQ-` IDs, under
+   > each: `US-xxx` · summary · one line per acceptance criterion, under
    > `## Development stories`.
 
 **One guard rule for every later stage.** Wherever a later stage passes *the contract path*,
@@ -507,7 +507,7 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
    clean test baseline first. On every `/pipeline-all` run with a requirements file
    (written, approved, or approved earlier), commit them as the branch's first commit: `git add` the current requirements
    file, for a part its sibling `<dir>/[0-9][0-9]-*.requirements.md` files, and the Stage Q
-   `<artifact root>` when it exists (`[ -d <artifact root> ] && git add <artifact root>`); commit only if
+   `<artifact root>` when it exists (`if [ -d <artifact root> ]; then git add <artifact root>; fi`); commit only if
    something is staged
    (`git diff --cached --quiet || git commit -m "docs: requirements for <slug>"`).
    After a split this includes all parts, so later parts reach the base branch with this PR.
@@ -674,7 +674,7 @@ TOKEN LEDGER
 - Never commit directly to main/master.
 - Never start implementation before explicit client approval (Stage 2.5).
 - Never skip the Stage R client confirmation when `requirements-writer` returned `DONE`.
-- One requirements part per run. Whenever a run ends — Stage 6 or any **Stop here** — and
+- One requirements part per run. Whenever a run ends at Stage 6 or any **Stop here** checkpoint — not at a Stage R or Stage Q stop — and
   `REMAINING_PARTS` is not empty, end with the next-part line from Stage 6. At Stages 3.9, 4.9
   and 5.9 (any **Stop here** before Stage 6 opens a PR) the line is instead:
   "Finish this part first (resume this branch), merge and deploy its PR, then run
