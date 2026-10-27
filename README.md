@@ -148,7 +148,7 @@ Nano changes skip planning and reviews entirely: `implementer` → `code-reviewe
 
 `/pipeline-all` is for features only. It first turns your idea (text, or a file path such as `docs/ideas/export.md`) into a requirements document based on the plugin's template, and asks you only about major gaps. You approve the document or ask for changes. A QA step runs next, and from the testing questions onward the run is the same as Example 1.
 
-In this release the requirements and QA agents are placeholders: each reports "not yet implemented" and the run continues with your original request.
+The requirements agent asks you only about major gaps (purpose, users, scope, main flow, security, other systems it connects to), then writes `docs/features/<slug>.requirements.md` from the plugin's template for you to approve or change. A feature that is genuinely too big for one run is split — only after you approve the split — into a shared file plus a few parts in `docs/features/<slug>/`; each run builds one part and ends with the command for the next. The QA step is still a placeholder: it reports "not yet implemented" and the run continues.
 
 ## Workflow
 

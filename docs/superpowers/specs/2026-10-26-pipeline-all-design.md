@@ -338,4 +338,5 @@ accounts for:
 
 1. The QA agent's final name and its outputs — needed to decide whether Stage Q gets an
    approval gate and how later stages (e.g. `qa-tester` at Stage 4.5) consume its outputs.
-2. The full `requirements-writer` instructions.
+2. The full `requirements-writer` instructions — designed in
+   `docs/superpowers/specs/2026-10-27-requirements-writer-design.md`.
