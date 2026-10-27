@@ -500,8 +500,8 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
 1. Run `git fetch -q origin <base branch>` and create `feature/<slug>` from `origin/<base branch>`
    (from the local `<base branch>` when there is no remote), so a later part includes earlier
    parts already merged. Verify a
-   clean test baseline first. On a `/pipeline-all` run that wrote or approved requirements
-   in Stage R, commit them as the branch's first commit: `git add` the current requirements
+   clean test baseline first. On every `/pipeline-all` run with a requirements file
+   (written, approved, or approved earlier), commit them as the branch's first commit: `git add` the current requirements
    file and, for a part, its sibling `<dir>/[0-9][0-9]-*.requirements.md` files; commit only if
    something is staged
    (`git diff --cached --quiet || git commit -m "docs: requirements for <slug>"`).
