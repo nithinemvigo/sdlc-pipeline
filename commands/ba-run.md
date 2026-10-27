@@ -27,7 +27,7 @@ When the arguments include `--requirements <path>` and `--artifact-root <dir>` (
 - Step 1 is skipped: the source is `--requirements`, already confirmed by the client. Create the run with `begin` as Step 1 describes.
 - Skip every "outside the project root" confirmation for that file, both as the source and as the story target.
 - Phase 3 target document: the `--requirements` file; do not ask which document.
-- In pipeline mode, every "To continue" line says: run `/sdlc-pipeline:pipeline-all <requirements path>` again (or `/sdlc-pipeline:ba-run` with the same `--requirements` and `--artifact-root`).
+- In pipeline mode, every instruction to run this command again (the Step 5a and 5b resume hints and Step 9's "To continue" line) says instead: run `/sdlc-pipeline:pipeline-all <requirements path>` again (or `/sdlc-pipeline:ba-run` with the same `--requirements` and `--artifact-root`).
 - End: print the Step 8 or Step 9 summary, then map the end to a status:
   - Step 8 `COMPLETED` or `COMPLETED WITH FOLLOW-UP` (or the Step 0 "already complete" return) → `BA_STATUS: COMPLETED`.
   - A stop / exit during triage (5a or 5c) → `BA_STATUS: PAUSED`.
