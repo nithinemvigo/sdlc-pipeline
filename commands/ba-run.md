@@ -8,13 +8,25 @@ allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), 
 You orchestrate the whole pipeline. This command contains **no phase logic of its own**: every phase is carried out by following the existing phase command file, with the hand-offs, gates and overrides below. Do not improvise methodology, hand-write any artifact, or bypass the scripts those commands use.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Project root: the current working directory of this session. Every generated artifact goes under the project root, never into the plugin directory.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`. Every generated artifact goes under the project root, never into the plugin directory.
 
 If a path below still contains the literal text `${CLAUDE_PLUGIN_ROOT}`, find the plugin directory by searching for `commands/ba-run.md` under the directory that contains this plugin's `.claude-plugin/plugin.json` (name `sdlc-pipeline`) and use that.
 
 Use whichever of `python`, `python3`, `py` works. If none does, tell the user Python 3 is required and ask before installing or doing anything else. Never install dependencies automatically. Do not introduce a database or vector store.
 
 **The run is resumable.** Every pipeline operation persists its state in `<project root>/.ba-requirements/pipeline-state.json` through `${CLAUDE_PLUGIN_ROOT}/scripts/pipeline-state.py`, so an interrupted run continues from its last completed operation instead of restarting. Never edit that file by hand. It is the orchestration source of truth only; it holds no requirements, gaps, stories or report content, which stay in their own folders.
+
+## Pipeline mode
+
+When the arguments include `--requirements <path>` and `--artifact-root <dir>` (as `/sdlc-pipeline:pipeline-all` passes them), run in pipeline mode:
+
+- Step 0: `COMPLETED` with `artifacts_still_valid` → print "BA analysis already complete" with the artifact root and report path, and return `COMPLETED` to the caller without asking. `INCOMPLETE`, `CORRUPT`, `INCOMPATIBLE` and `NO_STATE` are handled as below.
+- Step 1 is skipped: the source is `--requirements`, already confirmed by the client. Create the run with `begin` as Step 1 describes.
+- Skip every "outside the project root" confirmation for that file, both as the source and as the story target.
+- Phase 3 target document: the `--requirements` file; do not ask which document.
+- End: a completed run prints the Step 8 summary and returns `COMPLETED`. A pause or a blocked gate prints the Step 9 summary and returns `PAUSED` or `BLOCKED`. The last line of your output is exactly `BA_STATUS: COMPLETED`, `BA_STATUS: PAUSED` or `BA_STATUS: BLOCKED`.
+
+Without these arguments, run exactly as described below.
 
 ## How to run a phase
 

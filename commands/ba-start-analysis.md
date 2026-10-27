@@ -8,7 +8,7 @@ allowed-tools: Read, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), Bash(py
 You orchestrate this command. Detailed methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Project root: the current working directory of this session.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
 
 This phase only analyses requirements and decomposes them into atomic requirements. Do not perform gap analysis, write user stories, integrate with Jira, enrich requirements, or modify any source document.
 
@@ -38,7 +38,7 @@ Apply the `requirement-source-discovery` skill:
 - Non-Markdown file: explain Phase 1 supports only `.md` and ask for a Markdown source.
 - Directory: discover `.md` files recursively, excluding hidden and generated directories and `atomic_requirements/`. If more than one file remains, show the list (and a count of non-Markdown files excluded) and ask the user to confirm the source set before analysis.
 - Empty directory, empty file or unreadable file: tell the user and ask for another source or stop.
-- Source outside the project root: ask for confirmation before reading.
+- Source outside the project root: ask for confirmation before reading. In pipeline mode (the master run command called with `--requirements`), the given requirements file is already confirmed — do not ask.
 
 Use AskUserQuestion for choices between candidates. Proceed only with a confirmed list of absolute `.md` paths.
 

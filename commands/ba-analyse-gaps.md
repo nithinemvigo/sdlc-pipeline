@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), 
 You orchestrate this command. Methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Project root: the current working directory of this session.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
 
 This phase identifies and prioritises gaps only. Do not record decisions, resolve gaps, write user stories or acceptance criteria, integrate with Jira, or modify the atomic requirements or any source document. Do not hand-write `gaps.json`, the state file or the HTML: every write goes through `scripts/gap-register-store.py`.
 

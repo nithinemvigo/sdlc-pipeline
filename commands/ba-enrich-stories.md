@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), 
 You orchestrate this command. Methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Project root: the current working directory of this session.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
 
 Enrichment is incremental: only the stories a newly resolved or revised decision materially affects change. Never regenerate all stories, never decide a gap, never treat an open or skipped gap as a decision. Do not hand-edit the document, the state or the report; everything goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works.
 

@@ -38,8 +38,8 @@ Then:
 
 ## 3. Read each file completely
 
-1. Get the line count with `wc -l` (or `(Get-Content -LiteralPath <file>).Count` on PowerShell) before reading.
-2. Read with the Read tool. It returns a limited number of lines per call, so page with `offset` and `limit` until the last line has been read. Do not stop after the first page.
+1. Read with the Read tool. Read it in `offset`/`limit` chunks of at most 200 lines, continuing until a chunk returns fewer lines than requested — that is the end of the file. Never run `wc`, `stat` or `cat` on a Markdown file (this plugin's context-budget hook blocks it). Rules, skills and JSON files under 250 lines may be read in one call.
+2. Do not stop after the first chunk. The total line count is the last line number read once the end of the file is reached.
 3. Read the whole file: headings, lists, tables, code blocks, quotes. Nothing is skipped because it looks unimportant.
 4. If a file has very long lines that the tool truncates, read those lines another way (for example with Grep or a shell command) so no text is lost.
 5. Record for each file: absolute path, total lines, lines read, status.

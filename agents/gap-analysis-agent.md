@@ -26,6 +26,8 @@ Read these files from the plugin root, in full, and follow them:
 3. `skills/gap-identification/SKILL.md`
 4. `skills/gap-prioritisation/SKILL.md`
 
+Any Markdown file you must read completely: read it in `offset`/`limit` chunks of at most 200 lines, continuing until a chunk returns fewer lines than requested — that is the end of the file. Never run `wc`, `stat` or `cat` on a Markdown file (this plugin's context-budget hook blocks it). Rules, skills and JSON files under 250 lines may be read in one call.
+
 ## Responsibilities
 
 - Read every atomic requirement and consider it against the dimensions in the identification skill, together with the requirements related to it.

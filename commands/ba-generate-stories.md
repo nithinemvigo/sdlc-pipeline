@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), 
 You orchestrate this command. Methodology lives in the plugin's agent, skills and rules; follow them rather than improvising.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Project root: the current working directory of this session.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
 
 Stories are generated from the requirements known now, even when gaps are open or skipped. Never decide an open gap. Do not touch the atomic requirements or the gap register. Do not hand-edit the requirements document, `stories/story-generation-state.json` or `report/phase3-report.html`: every read and write goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works; if none does, tell the user Python 3 is required and ask before doing anything else.
 
@@ -60,7 +60,7 @@ Phase 1 does not record which files it analysed, so ask once:
 
 - A file: confirm it exists and is `.md`.
 - A folder: list its `.md` files (recursive; skip hidden and generated folders and `atomic_requirements/`, `gaps/`, `stories/`, `report/`). If more than one, ask the user to select the single primary document with AskUserQuestion. Never add the section to several files.
-- A path outside the project root: ask for confirmation first.
+- A path outside the project root: ask for confirmation first. In pipeline mode (the master run command called with `--requirements`), the given requirements file is already confirmed — do not ask.
 
 Stories are traced to requirement IDs, so requirements from all analysed files stay covered by the one consolidated section.
 

@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Glob, Grep, AskUserQuestion, Bash(python:*), Bash(py
 You run an interactive triage session over the gap register created by `/sdlc-pipeline:ba-analyse-gaps`. Detailed behaviour lives in the plugin's rules and skill; follow them.
 
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-Project root: the current working directory of this session.
+Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>`.
 
 Do not re-run gap analysis. Do not change the atomic requirements or any source document. Do not edit `gaps/gaps.json` or the HTML by hand: every read and write goes through `scripts/gap-register-store.py`. Use whichever of `python`, `python3`, `py` works; if none does, tell the user Python 3 is required and ask before doing anything else.
 
