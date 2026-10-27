@@ -49,10 +49,11 @@ grep -H -o '"claude-mem[^"]*"[[:space:]]*:[[:space:]]*\(true\|false\)' \
 echo "1H=${ENABLE_PROMPT_CACHING_1H:-unset}"
 echo "PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-unset}}"
 echo "HOME=$HOME"
+git show-ref --verify -q refs/heads/main && echo BASE_BRANCH=main || echo BASE_BRANCH=master
 ```
 
-Record the printed `PLUGIN_ROOT` and `HOME` values as `<PLUGIN_ROOT>` and `<HOME>`; Stage R
-uses them.
+Record the printed `PLUGIN_ROOT` and `HOME` values as `<PLUGIN_ROOT>` and `<HOME>`, and
+`BASE_BRANCH` in the ledger as `<base branch>`; Stage R and Stage 3 use them.
 
 - `: true` and no `: false` → pass.
 - any `: false` → disabled (a project-level `false` overrides the user file) → HALT.
@@ -101,17 +102,19 @@ A request that is not clearly a bug gets no question.
      `emv-email-02-campaigns`). A single file directly under `docs/features/`
      (`docs/features/<name>.requirements.md`) is not a part: `<slug>` = `<name>`. One Bash call:
      `ls <path> 2>/dev/null; ls <dir>/[0-9][0-9]-*.requirements.md 2>/dev/null; grep -c '^| Status | Approved |' <path>; rm -f <dir>/<stem>.contract.md`
-     — for a part file, add to the same call (base branch = `main` or `master`, whichever
-     exists):
-     `B=$(git show-ref -q --verify refs/heads/main && echo main || echo master); echo "BASE=$B"; git branch --list 'feature/<feature folder>-*' --no-merged "$B"`.
+     — for a part file, add to the same call (`$B` is the base branch the Stage -1 preflight
+     recorded; fetch first so a part merged on the remote is seen as merged):
+     `B=<base branch>; git fetch -q origin "$B" 2>/dev/null; R=origin/$B; git rev-parse -q --verify "$R" >/dev/null || R=$B; git branch --list 'feature/<feature folder>-[0-9][0-9]-*' --no-merged "$R"`.
      Record `<path>`. `REMAINING_PARTS` and `part K of P` apply only to part files
      (`NN-*.requirements.md` in a feature folder); a top-level
      `docs/features/<name>.requirements.md` gets no part fields. For a part, record
      `REMAINING_PARTS` = the listed parts with a higher NN than this part, and the ledger
      entry as `part K of P` (K = this part's place among the listed parts, P = how many are
      listed). If a branch for a lower-NN part is listed, ask with `AskUserQuestion`:
-     **Continue anyway** | **Stop** — "Part NN is not merged into <base> yet; this part may
-     use what it ships." **Stop** ends the run. When the `grep -c` prints `1`, the file was
+     **Continue anyway** | **Stop** — "Part NN's branch does not appear merged into
+     <base branch> (squash-merged branches show this too); this part may use what it ships."
+     **Stop** ends the run with: "Once part NN is merged and deployed, run
+     /sdlc-pipeline:pipeline-all <this path>." When the `grep -c` prints `1`, the file was
      approved earlier: record `REQUIREMENTS: <path> (approved earlier[, part K of P])` and skip the step-4
      question. Otherwise go to the step-4 question showing only the path — you do not read
      the file; the summary, counts and Open Questions are not available.
@@ -121,8 +124,9 @@ A request that is not clearly a bug gets no question.
      `ls -d docs/features/<slug>.requirements.md docs/features/<slug>/*.requirements.md 2>/dev/null; rm -f docs/features/<slug>.requirements.contract.md docs/features/<slug>/*.contract.md`.
      If anything exists, ask once: **Use the existing file** (for a split folder, ask which
      part; show only its path — you do not read the file — record `<slug>`, and for a part
-     `REMAINING_PARTS` and `part K of P`, as above from the same listing, and ask
-     the step-4 question; the summary, counts and Open Questions are not available) |
+     `REMAINING_PARTS` and `part K of P`, as above from the same listing, then continue exactly as the part-path
+     bullet above, so the approved-earlier skip and the earlier-part check run; the
+     summary, counts and Open Questions are not available) |
      **Regenerate** (delete the listed files in one Bash call, then dispatch the writer).
 2. **Dispatch `requirements-writer`** with:
    - `mode: draft`, `question_round: 0`
@@ -190,7 +194,7 @@ A request that is not clearly a bug gets no question.
      `PLACEHOLDER`, say the requirements agent is not implemented yet), and continue to
      Stage Q.
 6. Ledger: `REQUIREMENTS: <path> (approved, revisions: R)`,
-   `REQUIREMENTS: <path> (approved earlier)`, `REQUIREMENTS: <path> (existing, unrevised)` or
+   `REQUIREMENTS: <path> (approved earlier[, part K of P])`, `REQUIREMENTS: <path> (existing, unrevised)` or
    `REQUIREMENTS: none`. After a split,
    `<path>` is part 1, `<slug>` becomes part 1's part slug for the rest of the run (plans
    dir, branch), and the entry reads `(approved, part 1 of P, revisions: R)`; also
@@ -444,8 +448,8 @@ Present in plain language, in ONE turn: short summary (what gets built, in what 
 key decisions), the `00-overview.md` path, the contract's `UNCONFIRMED` items (n/a unless
 `CONTRACT: distilled`), any
 requirements Open Questions still Open (from Stage R's return; write "not available
-(existing file)" when Stage R returned no agent output — existing file or part path — and
-"none reported" only when the agent returned an empty list), and an
+(existing file)" only for an existing file or part path, "n/a" when the ledger says
+`REQUIREMENTS: none`, and "none reported" when the agent returned an empty list), and an
 `AskUserQuestion`: **Approve and build** | **Request changes**.
 
 In the SAME `AskUserQuestion` call, ask a second question — **Build mode.** State the task
@@ -485,12 +489,12 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
 **superpowers:subagent-driven-development**. Do NOT use
 **superpowers:using-git-worktrees** — work on a branch in the main checkout.
 
-1. From latest main create `feature/<slug>`. Verify a
+1. From the latest `<base branch>` create `feature/<slug>`. Verify a
    clean test baseline first. On a `/pipeline-all` run that wrote or approved requirements
    in Stage R, commit them as the branch's first commit:
    `git add <every requirements path from Stage R> && git commit -m "docs: requirements for <slug>"`.
    After a split this includes all parts, so later parts reach the base branch with this PR.
-2. Record the base commit.
+2. Record the base commit (HEAD after the requirements commit).
 3. For each task IN ORDER, dispatch a fresh `implementer` with: **the single task file
    path** (`task-NN-<name>.md` — never the plan directory, never `00-overview.md` in
    full), repo root + branch, the Global Constraints block pasted inline (it is small),
@@ -585,7 +589,7 @@ pass, no re-review. Max 2 loops, then escalate with your recommendation.
 
 ## Stage 5.5 — Performance gate (only if a task is `perf-sensitive: true`)
 
-Dispatch `perf-tester` (gstack /benchmark) to compare main vs branch on the touched
+Dispatch `perf-tester` (gstack /benchmark) to compare the base branch vs branch on the touched
 paths. Regressions → fresh `implementer`. Skip entirely otherwise.
 
 ## Stage 5.8 — Documentation
@@ -597,7 +601,7 @@ branch.
 ## Stage 5.9 — Pre-ship checkpoint
 
 Everything is reviewed, documented and committed. Ship is the last dispatch and it is not
-small — it syncs main, re-runs the suite, pushes and opens the PR.
+small — it syncs the base branch, re-runs the suite, pushes and opens the PR.
 
 `build_mode: run to completion` → continue without asking.
 
@@ -611,7 +615,7 @@ Otherwise report the final ledger and `AskUserQuestion`:
 
 Dispatch `ship-pr` with repo root + branch, plan file path, review verdicts, test
 results, and the TDD/UNIT_TESTS flags for the PR body. It runs gstack /ship ONLY
-(no superpowers skills here — /ship already syncs main, re-runs the suite, pushes,
+(no superpowers skills here — /ship already syncs the base branch, re-runs the suite, pushes,
 and opens the PR).
 
 Report in <10 lines: what shipped, PR link, test summary, anything deferred, final ledger
@@ -628,6 +632,7 @@ Update after every stage. Keep it in the ledger, not in prose to the client.
 ```
 TOKEN LEDGER
   requirements: <path> (approved[, part K of P], revisions: R) | <path> (approved earlier[, part K of P]) | <path> (existing, unrevised) | none
+  base_branch: <main | master>
   remaining_parts: <paths> | none   split_rounds: N / 2
   contract: distilled | copied | none
   requirements_dispatches: N   requirements_revisions: N / 4
