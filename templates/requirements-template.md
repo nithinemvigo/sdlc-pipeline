@@ -5,7 +5,7 @@ sdlc-pipeline requirements template v1.
 - Fill every section marked _Required_.
 - Never delete or renumber sections. If an _Optional_ section does not apply, keep its
   heading and write "Not applicable." (Other agents cite sections by number.)
-- IDs (BR-, VAL-, AC-, Q-) start at 001 and are never reused.
+- IDs (BR-, VAL-, AC-, Q-) start at 001 (N01 in part N of a split) and are never reused.
 - Split features: each part file is complete on its own; part N uses IDs N01–N99 (part 1:
   BR-101, part 2: BR-201). If a part uses what an earlier, already-deployed part shipped,
   say so in §21 Dependencies.

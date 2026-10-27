@@ -65,7 +65,8 @@ if it is the only source of the idea, ask for a Markdown or text version (a majo
 1. **Read.** The template, once. If `template` starts with `unavailable`, run one Glob for
    `**/templates/requirements-template.md` with its path set to `<home>/.claude/plugins`,
    using the home path given in parentheses (Glob does not expand `~`); if none is found,
-   return `BLOCKED` with the reason. Then each input file, in chunks. Then targeted code
+   return `BLOCKED` with the reason. If `template` is a path that cannot be read, treat it as
+   `unavailable`. Then each input file, in chunks. Then targeted code
    reads: existing roles and permissions, screens, data and integrations the idea touches.
 2. **Major gaps.** Check the idea against: its purpose; who uses it; what is in and out of
    scope; the main user flow; security and compliance (login, permissions, personal data,

@@ -106,7 +106,11 @@ A request that is not clearly a bug gets no question.
      `ls <path> 2>/dev/null; ls <dir>/[0-9][0-9]-*.requirements.md 2>/dev/null; grep -c '^| Status | Approved |' <path>; rm -f <dir>/<stem>.contract.md`
      — for a part file, add to the same call (`$B` is the base branch the Stage -1 preflight
      recorded; fetch first so a part merged on the remote is seen as merged):
-     `B=<base branch>; git fetch -q origin "$B" 2>/dev/null; R=origin/$B; git rev-parse -q --verify "$R" >/dev/null || R=$B; git branch --list 'feature/<feature folder>-[0-9][0-9]-*' --no-merged "$R"`.
+     `B=<base branch>; git fetch -q origin "$B" 2>/dev/null; R=origin/$B; git rev-parse -q --verify "$R" >/dev/null || R=$B; git branch --list 'feature/<feature folder>-[0-9][0-9]-*' --no-merged "$R"`,
+     and, in the same call, for each branch it lists:
+     `git ls-remote --exit-code --heads origin <branch> >/dev/null 2>&1 || echo "GONE <branch>"`.
+     A `GONE` branch no longer exists on the remote: treat it as merged (deleted after merge).
+     If `ls <path>` prints nothing, tell the client the file was not found and stop.
      Record `<path>`. `REMAINING_PARTS` and `part K of P` apply only to part files
      (`NN-*.requirements.md` in a feature folder); a top-level
      `docs/features/<name>.requirements.md` gets no part fields. For a part, record
@@ -115,9 +119,11 @@ A request that is not clearly a bug gets no question.
      listed). If a branch for a lower-NN part is listed, ask with `AskUserQuestion`:
      **Continue anyway** | **Stop** — "Part NN's branch does not appear merged into
      <base branch> (squash-merged branches show this too); this part may use what it ships."
+     (A listed branch that is `GONE` raises no warning.)
      **Stop** ends the run with: "Once part NN is merged and deployed, run
      /sdlc-pipeline:pipeline-all <this path>." When the `grep -c` prints `1`, the file was
-     approved earlier: record `REQUIREMENTS: <path> (approved earlier[, part K of P])` and skip the step-4
+     approved earlier: record `REQUIREMENTS: <path> (approved earlier[, part K of P])`, tell the
+     client "Part already approved — to change it, edit the file or choose Regenerate.", and skip the step-4
      question. Otherwise go to the step-4 question showing only the path — you do not read
      the file; the summary, counts and Open Questions are not available.
    - **Otherwise** derive `<slug>` from the request (kebab-case, at most 5 words). The
@@ -491,10 +497,14 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
 **superpowers:subagent-driven-development**. Do NOT use
 **superpowers:using-git-worktrees** — work on a branch in the main checkout.
 
-1. From the latest `<base branch>` create `feature/<slug>`. Verify a
+1. Run `git fetch -q origin <base branch>` and create `feature/<slug>` from `origin/<base branch>`
+   (from the local `<base branch>` when there is no remote), so a later part includes earlier
+   parts already merged. Verify a
    clean test baseline first. On a `/pipeline-all` run that wrote or approved requirements
-   in Stage R, commit them as the branch's first commit:
-   `git add <every requirements path from Stage R> && git commit -m "docs: requirements for <slug>"`.
+   in Stage R, commit them as the branch's first commit: `git add` the current requirements
+   file and, for a part, its sibling `<dir>/[0-9][0-9]-*.requirements.md` files; commit only if
+   something is staged
+   (`git diff --cached --quiet || git commit -m "docs: requirements for <slug>"`).
    After a split this includes all parts, so later parts reach the base branch with this PR.
 2. Record the base commit (HEAD after the requirements commit).
 3. For each task IN ORDER, dispatch a fresh `implementer` with: **the single task file
@@ -660,7 +670,10 @@ TOKEN LEDGER
 - Never start implementation before explicit client approval (Stage 2.5).
 - Never skip the Stage R client confirmation when `requirements-writer` returned `DONE`.
 - One requirements part per run. Whenever a run ends — Stage 6 or any **Stop here** — and
-  `REMAINING_PARTS` is not empty, end with the next-part line from Stage 6.
+  `REMAINING_PARTS` is not empty, end with the next-part line from Stage 6. At Stages 3.9, 4.9
+  and 5.9 (any **Stop here** before Stage 6 opens a PR) the line is instead:
+  "Finish this part first (resume this branch), merge and deploy its PR, then run
+  /sdlc-pipeline:pipeline-all <next part path>."
 - Never start Stage 0.5 before Stage R and Stage Q have finished.
 - `/pipeline-all` runs features only. A clear bug request gets the Stage 0 redirect question.
 - Never skip a gate because a previous gate passed cleanly.

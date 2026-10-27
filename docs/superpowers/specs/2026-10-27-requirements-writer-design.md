@@ -207,6 +207,12 @@ they conflict.
 - A part already marked `| Status | Approved |` is not asked for approval again.
 - Stage 3 commits the approved requirements files (all parts) as the branch's first commit,
   so later parts reach the base branch with the first PR.
+- Stage 3 fetches and creates `feature/<slug>` from `origin/<base branch>` (local base when there is no
+  remote), so a later part includes earlier parts already merged.
+- A **Stop here** before Stage 6 opens a PR ends with "Finish this part first (resume this branch), merge
+  and deploy its PR, then run `/sdlc-pipeline:pipeline-all <next part path>`." Stage 6 keeps the line above.
+- The requirements commit uses `git add` of the current file plus a part's sibling `NN-*.requirements.md`
+  files and commits only if something is staged, so a re-run after an early stop still commits them.
 - **"Change the split"** re-dispatches with `previous_proposal` (the last `parts` / `order`
   lines, verbatim) and the cumulative `split_feedback`, at `question_round: 2`.
 
@@ -238,3 +244,7 @@ require **both** normalised stems to be at least 12 characters. Exact-stem match
 unchanged. Verified with a test that imports the hook and checks: the four false matches
 above no longer match; an exact `<stem>.contract.md` still matches; and a long renamed
 contract (the distiller-shortening case the fallback exists for) still matches.
+
+- Refinement: the contract's stem must be at least 12 characters and the original's at least 8, so a
+  short spec name (`payments`) still matches a long slug contract (`payments-refund-flow`) used by
+  `/pipeline`, while `auth` (4 characters) and `csv-export` against `export` (contract 6) do not.
