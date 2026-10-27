@@ -22,7 +22,7 @@ Use whichever of `python`, `python3`, `py` works. If none does, tell the user Py
 When the arguments include `--requirements <path>` and `--artifact-root <dir>` (as `/sdlc-pipeline:pipeline-all` passes them), run in pipeline mode:
 
 - First resolve `--requirements` to an absolute path against the session working directory, and use that absolute path everywhere (`--sources`, `--target`, the agent prompts).
-- Every script call in this command and in the phase commands and skills it follows — including shorthand mentions such as `pipeline-state.py start --operation …` or `gap-register-store.py summary` — gets `--project-root <artifact root>`. Never rely on the script default.
+- Every script call in this command and in the phase commands and skills it follows — including shorthand mentions such as `pipeline-state.py start --operation …` or `gap-register-store.py summary` — gets `--project-root <artifact root>`. Never rely on the script default. (`validate-atomic-requirements.py` and `validate-gap-register.py` take no `--project-root`; give them their file paths as shown, with `<project root>` meaning the artifact root.)
 - Step 0: `COMPLETED` with `artifacts_still_valid` → print "BA analysis already complete" with the artifact root and report path, and return `COMPLETED` to the caller without asking. `INCOMPLETE`, `CORRUPT`, `INCOMPATIBLE` and `NO_STATE` are handled as below.
 - Step 1 is skipped: the source is `--requirements`, already confirmed by the client. Create the run with `begin` as Step 1 describes.
 - Skip every "outside the project root" confirmation for that file, both as the source and as the story target.
