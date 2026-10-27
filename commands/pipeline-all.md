@@ -102,8 +102,8 @@ A request that is not clearly a bug gets no question.
    - `input_files`: paths of any files the client referenced, or `none`
    - `template`: `<PLUGIN_ROOT>/templates/requirements-template.md`, using the value Stage -1
      printed. If it printed `unset`, find the template with one Glob for
-     `**/templates/requirements-template.md`; if none, HALT and say the plugin's template is
-     missing.
+     `**/templates/requirements-template.md` under `~/.claude/plugins`; if none, pass
+     `template: unavailable`, note it in the ledger, and continue — never HALT here.
    - `output`: the requirements path
    - `repo_root`
 3. **`NEEDS_CONTEXT`** → relay its numbered questions to the client in ONE batched message,
@@ -239,9 +239,10 @@ the **contract path** (omit it when the ledger says `CONTRACT: none`), and, only
 ledger says `REQUIREMENTS: none`, paths to any files the client referenced. When the ledger
 has `REQUIREMENTS: <path> (approved…)` or `(existing, unrevised)`:
 
-- Also pass `<source>`, the approved requirements file, labelled explicitly as the original
-  the planner may read (Feature mode). State that the approved requirements are the source
-  of truth. The planner gets no raw client files.
+- When `CONTRACT: distilled`, also pass `<source>`, the approved requirements file, labelled
+  explicitly as the original the planner may read (Feature mode). When `CONTRACT: copied`,
+  the contract is the same text — pass it alone. State that the approved requirements are
+  the source of truth. The planner gets no raw client files.
 - Add to the dispatch: "Keep the overview's `FR-NN` traceability rows, but each FR row cites
   the `BR-xxx` / `AC-xxx` IDs it covers, and every Must Have `BR-xxx` appears in at least one
   FR row."
@@ -329,8 +330,9 @@ The `wc -c` is your one authorised size check. **These are upper bounds that cat
 output — they are NOT targets, and a plan is never sent back for being too detailed.** Judge by
 character count without opening anything: task file > 12,000 - overview > 20,000 - slice >
 40,000 - contract > 9,000 -> return those paths to `planner` (or `distiller`) in targeted mode.
-The contract cap applies only when `CONTRACT: distilled`; a copied contract is exempt — it is
-the client-approved text, never shrink it.
+The contract cap applies only to a standard distilled contract. A copied contract and a
+requirements-mode contract are exempt — never cut the client-approved text or the
+requirements-mode rows.
 
 The opposite signal matters more: a task file **under 1,200 characters is probably thin** —
 check it against the completeness output above rather than waving it through.
