@@ -92,18 +92,25 @@ A request that is not clearly a bug gets no question.
    (Stage 0.8 re-creates them; an old contract would make the context-budget hook redirect
    agents away from the new requirements).
    - **The request is a path to an existing `*.requirements.md`** (for example the next part
-     of a split feature): do not dispatch the writer. One Bash call:
-     `ls <path> <dir>/00-shared.requirements.md 2>/dev/null; rm -f <dir>/<stem>.contract.md`.
+     of a split feature): do not dispatch the writer. `<dir>` is the folder containing the
+     file; `<stem>` is its file name without `.md`. Set `<slug>` =
+     `<feature folder name>-<part file stem without .requirements>`, so the plans dir and
+     branch are unique per part (`docs/features/emv-email/02-campaigns.requirements.md` →
+     `emv-email-02-campaigns`). One Bash call:
+     `ls <path> <dir>/00-shared.requirements.md 2>/dev/null; ls <dir>/[0-9][0-9]-*.requirements.md 2>/dev/null; rm -f <dir>/<stem>.contract.md`.
      Record `<path>`, and `REQUIREMENTS_SHARED: <dir>/00-shared.requirements.md` when it
-     exists. Go to the step-4 question showing only the path — you do not read the file; the
-     summary, counts and Open Questions are not available.
+     exists. Record `REMAINING_PARTS` = the listed parts with a higher NN than this part, and
+     the ledger entry as `part K of P` (K = this part's place among the listed parts, P =
+     how many are listed). Go to the step-4 question showing only the path — you do not read
+     the file; the summary, counts and Open Questions are not available.
    - **Otherwise** derive `<slug>` from the request (kebab-case, at most 5 words). The
      single-file path is `docs/features/<slug>.requirements.md`; the split folder is
      `docs/features/<slug>/`. One Bash call:
      `ls -d docs/features/<slug>.requirements.md docs/features/<slug>/*.requirements.md 2>/dev/null; rm -f docs/features/<slug>.requirements.contract.md docs/features/<slug>/*.contract.md`.
      If anything exists, ask once: **Use the existing file** (for a split folder, ask which
-     part; show only its path — you do not read the file — record the shared file as above,
-     and ask the step-4 question; the summary, counts and Open Questions are not available) |
+     part; show only its path — you do not read the file — record the shared file,
+     `<slug>`, `REMAINING_PARTS` and `part K of P` as above from the same listing, and ask
+     the step-4 question; the summary, counts and Open Questions are not available) |
      **Regenerate** (delete the listed files in one Bash call, then dispatch the writer).
 2. **Dispatch `requirements-writer`** with:
    - `mode: draft`, `question_round: 0`
@@ -143,8 +150,9 @@ A request that is not clearly a bug gets no question.
    - **Request changes** → take the client's feedback verbatim and re-dispatch in
      `revision` mode with `feedback`, `files` (every requirements path in play, including
      `REQUIREMENTS_SHARED`), `question_round: 0`, the cumulative `answers`, plus the same
-     `request`, `input_files`, `template`, `output`, `output_dir` and `repo_root`. Return to
-     this step.
+     `request`, `input_files`, `template`, `output`, `output_dir` and `repo_root` (`output` and
+     `output_dir` are `n/a` when the run started from an existing file or part path —
+     revision only edits `files`). Return to this step.
    - Count each revision in `requirements_revisions`. **At 4, stop** and say:
 
      > We've revised the requirements 4 times. Options: (a) approve as-is and keep the
@@ -155,14 +163,15 @@ A request that is not clearly a bug gets no question.
    to Stage Q. No gate. **`BLOCKED`** → the same, but say
    `Requirements agent blocked: <reason> — continuing with the raw request.`
    - **Exception:** if the client chose **Use the existing file** and a later `revision`
-     dispatch returns `PLACEHOLDER`, keep the file: record
+     dispatch returns `PLACEHOLDER` or `BLOCKED`, keep the file: record
      `REQUIREMENTS: <path> (existing, unrevised)`, tell the client in one line that their
      changes could not be applied because the requirements agent is not implemented yet, and
      continue to Stage Q.
-6. Ledger: `REQUIREMENTS: <path> (approved, revisions: N)`,
+6. Ledger: `REQUIREMENTS: <path> (approved, revisions: R)`,
    `REQUIREMENTS: <path> (existing, unrevised)` or `REQUIREMENTS: none`. After a split,
-   `<path>` is part 1 and the entry reads `(approved, part 1 of N, revisions: N)`; also
-   record `REQUIREMENTS_SHARED: <shared path>` and `REMAINING_PARTS: <part 2…N paths>`.
+   `<path>` is part 1, `<slug>` becomes part 1's part slug for the rest of the run (plans
+   dir, branch), and the entry reads `(approved, part 1 of P, revisions: R)`; also
+   record `REQUIREMENTS_SHARED: <shared path>` and `REMAINING_PARTS: <part 2…P paths>`.
    **One part per run** — the rest of this run builds part 1 only.
 
 You do not read the requirements file. Everything you show the client comes from the agent's
@@ -604,7 +613,7 @@ Update after every stage. Keep it in the ledger, not in prose to the client.
 
 ```
 TOKEN LEDGER
-  requirements: <path> (approved[, part K of N], revisions: N) | <path> (existing, unrevised) | none
+  requirements: <path> (approved[, part K of P], revisions: R) | <path> (existing, unrevised) | none
   requirements_shared: <path> | none   remaining_parts: <paths> | none   split_rounds: N / 2
   contract: distilled | copied | none
   requirements_dispatches: N   requirements_revisions: N / 4

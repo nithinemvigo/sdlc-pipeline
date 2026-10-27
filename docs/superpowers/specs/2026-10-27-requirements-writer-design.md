@@ -117,14 +117,14 @@ Example: the EMV Email Automation sample (9 modules) gives about 4 parts, not 9.
 
 | Stage | Change |
 |---|---|
-| R step 1 | If the request is a path to an existing `*.requirements.md` (e.g. the next part), skip the writer: show the path and go to the approval question; if `00-shared.requirements.md` sits beside it, record it as `REQUIREMENTS_SHARED`. Otherwise check for both `docs/features/<slug>.requirements.md` and `docs/features/<slug>/` (Use existing / Regenerate). Stale-contract removal covers `<dir>/<stem>.contract.md` for the file(s) in play. |
+| R step 1 | If the request is a path to an existing `*.requirements.md` (e.g. the next part), skip the writer: show the path and go to the approval question; if `00-shared.requirements.md` sits beside it, record it as `REQUIREMENTS_SHARED`. For a part file, `<slug>` = `<feature folder name>-<part file stem without .requirements>` (e.g. `emv-email-02-campaigns`), so plans dir and branch are per part; after an approved split `<slug>` switches to part 1's part slug. On every part run the same Bash call also lists `<dir>/[0-9][0-9]-*.requirements.md` (never reading a file) and records `REMAINING_PARTS` = parts with a higher NN, ledger entry `part K of P`. Otherwise check for both `docs/features/<slug>.requirements.md` and `docs/features/<slug>/` (Use existing / Regenerate). Stale-contract removal covers `<dir>/<stem>.contract.md` for the file(s) in play. |
 | R step 2 | Also pass `output_dir`. |
 | R new step | **`SPLIT_PROPOSAL`** → in one turn show parts, order and shared line; ask **Approve split** \| **Keep as one file** \| **Change the split**. Approve → re-dispatch draft with `approved_split` = parts verbatim. Keep → `approved_split: one-file`. Change → `split_feedback`, re-dispatch; after 2 change rounds offer only Approve / Keep. |
 | R step 4 | `DONE` with several paths → list each file with its counts; one **Approve all** \| **Request changes** question; on approve, `sed` the Status line of every file; on changes, `revision` with `files`. |
 | R step 5 | **`BLOCKED`** (e.g. template not found) → handled like `PLACEHOLDER`, with the reason shown: continue with the raw request, `REQUIREMENTS: none`. |
-| R ledger | Split → `REQUIREMENTS: <part 1> (approved, part 1 of N)`, `REQUIREMENTS_SHARED: <shared>`, `REMAINING_PARTS: <paths>`. |
+| R ledger | Split → `REQUIREMENTS: <part 1> (approved, part 1 of P)`, `REQUIREMENTS_SHARED: <shared>`, `REMAINING_PARTS: <paths>`. |
 | Q | Also pass `REQUIREMENTS_SHARED` when set. |
-| 0.8 | With a shared file: size = shared + part; copy = `cat <shared> <part> > <part dir>/<part stem>.contract.md`; distil = distiller gets the part as `<source>` and the shared file as an extra input to read. Contracts always sit beside their requirements file. |
+| 0.8 | With a shared file: size = shared + part; copy = `cp <shared> <contract>` then `tail -n +1 <part> >> <contract>` (the hook blocks `cat` on long Markdown), with `<contract>` = `<part dir>/<part stem>.contract.md`; distil = distiller gets the part as `<source>` and the shared file as an extra input to read. Contracts always sit beside their requirements file. |
 | 1 | When requirements exist, dispatch the planner in **Approved-requirements mode**. When distilled, also pass the shared file as an original it may read. |
 | 6 | If `REMAINING_PARTS` is not empty, the final report ends with the next command: `/sdlc-pipeline:pipeline-all <next part path>`. |
 | Ledger | Add `requirements_shared`, `remaining_parts`, `split_rounds: N / 2`. |
