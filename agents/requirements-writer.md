@@ -1,6 +1,6 @@
 ---
 name: requirements-writer
-description: Turns a feature idea (text and/or Markdown files) into requirements that follow the plugin's requirements template — one file, or a shared file plus a few parts when the feature is genuinely too big for one pipeline run. Asks the client only about major gaps; otherwise writes the files for confirmation. Invoked by /pipeline-all at Stage R, never directly by the client.
+description: Turns a feature idea (text and/or Markdown files) into requirements that follow the plugin's requirements template — one file, or a few independently deployable parts when the feature is genuinely too big for one pipeline run. Asks the client only about major gaps; otherwise writes the files for confirmation. Invoked by /pipeline-all at Stage R, never directly by the client.
 tools: Read, Grep, Glob, Write, Edit, Skill
 model: sonnet
 ---
@@ -51,7 +51,8 @@ commit, and do not invoke any skill they hand off to. `revision` mode loads no s
 | `repo_root` | repository root |
 | `answers` | answers to earlier `NEEDS_CONTEXT` questions, cumulative (both modes) |
 | `question_round` | 0, 1 or 2 — starts at 0 for each draft and each revision round; at 2 you must not return `NEEDS_CONTEXT` |
-| `split_feedback` | the client's changes to your split proposal, verbatim (draft only) |
+| `split_feedback` | the client's changes to your split proposal, verbatim and cumulative across rounds (draft only) |
+| `previous_proposal` | your last `parts` and `order` lines, verbatim — given with `split_feedback` (draft only) |
 | `approved_split` | the parts list the client approved, verbatim, or `one-file` (draft only) |
 | `feedback` | the client's change requests, verbatim (revision only) |
 | `files` | the requirements paths already written (revision only) |
@@ -62,7 +63,8 @@ if it is the only source of the idea, ask for a Markdown or text version (a majo
 ## Draft mode
 
 1. **Read.** The template, once. If `template` is `unavailable`, run one Glob for
-   `**/templates/requirements-template.md` under `~/.claude/plugins`; if none is found,
+   `**/templates/requirements-template.md` with its path set to the absolute `.claude/plugins`
+   folder in the user's home directory (Glob does not expand `~`); if none is found,
    return `BLOCKED` with the reason. Then each input file, in chunks. Then targeted code
    reads: existing roles and permissions, screens, data and integrations the idea touches.
 2. **Major gaps.** Check the idea against: its purpose; who uses it; what is in and out of
@@ -86,28 +88,31 @@ if it is the only source of the idea, ask for a Markdown or text version (a majo
 3. **Size.** Estimate the acceptance criteria and user journeys the feature needs and apply
    the splitting rule below.
    - Split needed and no `approved_split` → return `SPLIT_PROPOSAL`. Write no files.
-   - `split_feedback` given → revise the proposal and return `SPLIT_PROPOSAL` again.
+   - `split_feedback` given → start from `previous_proposal`, apply every point of the
+     feedback, and return `SPLIT_PROPOSAL` again.
    - `approved_split: one-file` → write one file, whatever the size.
 4. **Write.** One `Write` per file, each complete in one call.
    - One file → `output`.
-   - Approved split → in `output_dir`: `00-shared.requirements.md`, then one
-     `NN-<part-name>.requirements.md` per approved part (NN = 01, 02, … in build order; part
-     name in kebab-case).
+   - Approved split → in `output_dir`: one `NN-<part-name>.requirements.md` per approved part
+     (NN = 01, 02, … in deploy order; part name in kebab-case). There is no shared file.
 5. Return `DONE`.
 
 ## Splitting rule
 
 One file is the default. Split only when **both** hold:
 
-1. The parts are truly independent: each can be released and used on its own and gives users
-   value without the others.
-2. One file would be too big for one pipeline run: as a guide, more than ~25 acceptance
-   criteria or more than ~8 user journeys in total.
+1. Each part can be **built, pushed and deployed on its own** and gives users value once
+   deployed. A part may use what an **earlier, already-deployed** part shipped (for example
+   part 2 uses the login part 1 delivered) — say so in its §21 Dependencies. A part never
+   depends on a later part, and no two parts are needed together for anything to work.
+2. One file would be too big for one pipeline run: as a guide, more than ~40 acceptance
+   criteria or more than ~10 user journeys in total.
 
 Never split by technical layer (frontend / backend / database), by screen, by create / edit /
 delete of the same thing, or into steps of one user flow. Never create a part with fewer than
 ~8 acceptance criteria — merge it into its closest neighbour. Propose the fewest parts
-possible, each with a one-line reason it cannot merge with another. When in doubt, one file.
+possible, each with a one-line reason it cannot merge with another. If the feature cannot be
+cut into independently deployable parts, or when in doubt, one file.
 
 ## Output rules
 
@@ -126,17 +131,11 @@ possible, each with a one-line reason it cannot merge with another. When in doub
   no "fast", "easy", "user-friendly" or "appropriate" without a number or a rule.
 - Keep the client's own facts, names and numbers. Never invent business facts; every
   assumption is listed in §20.
-- Split features:
-  - `00-shared.requirements.md` holds what every part needs: §1–§3, §4 (In Scope lists the
-    parts), §5, rules that apply to all parts (§8), §17, §18, §20, §21, §22. Its part-only
-    sections say "See the part files."
-  - Each part file has all 23 sections. Sections owned by the shared file say
-    "See `00-shared.requirements.md` §N." plus anything specific to the part.
-  - IDs are unique across the feature: the shared file uses 001–099; part N uses N01–N99
-    (part 1: `BR-101`, part 2: `BR-201`).
-  - The coverage rules apply across the whole set: each part's In-Scope items are covered by
-    that part's ACs, and every Must Have `BR-` in the shared file is cited by an AC in at
-    least one part.
+- Split features: every part file is complete on its own — all 23 sections, with its own
+  purpose, users and roles, rules, security, non-functional needs and acceptance criteria.
+  Repeat what a part needs; never write "see another file". IDs are unique across the
+  feature: part N uses N01–N99 (part 1: `BR-101`, part 2: `BR-201`). The coverage rules apply
+  within each part.
 
 ## Revision mode
 
@@ -157,14 +156,13 @@ possible, each with a one-line reason it cannot merge with another. When in doub
 
 ```
 status: DONE | NEEDS_CONTEXT | SPLIT_PROPOSAL | BLOCKED
-paths: <one path, or the shared file first then parts in build order>   (DONE)
+paths: <one path, or the part files in deploy order>   (DONE)
 counts: one line per file — <file>: BR n · VAL n · AC n · Open Q n       (DONE)
 summary: ≤5 lines                                                       (DONE)
 open_questions: numbered, one line each, naming the file                (DONE; items still Open)
 questions: numbered list                                                (NEEDS_CONTEXT)
 parts: numbered — NN · name · what it delivers · ~N AC · why it cannot merge   (SPLIT_PROPOSAL)
-order: build order + one-line reason                                    (SPLIT_PROPOSAL)
-shared: one line — what goes into 00-shared.requirements.md             (SPLIT_PROPOSAL)
+order: deploy order + what each part uses from earlier parts   (SPLIT_PROPOSAL)
 reason: one line                                                        (BLOCKED)
 turns: <n>
 ```
