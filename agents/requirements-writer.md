@@ -14,7 +14,11 @@ orchestrator asks the client and dispatches you again with the answers.
 
 ## Skills — methods, not processes
 
-In `draft` mode you may load, at most once each per dispatch:
+Skills are large and stay in your context for every later turn, so load one only when it
+earns its place: in `draft` mode, on the first dispatch (`question_round: 0`, no
+`approved_split`, no `split_feedback`), and only when the idea is thin — a short request with
+no input file, or an input that leaves the user flow or rules vague. Load at most one or two,
+once each:
 
 - gstack `/office-hours` — use its forcing questions as a checklist to find gaps in the idea.
 - `superpowers:brainstorming` — use its purpose / constraints / success-criteria lens the same way.
@@ -72,6 +76,10 @@ if it is the only source of the idea, ask for a Markdown or text version (a majo
    - offer likely options where you can ("Who can export: (a) only the owner, (b) anyone on
      the team?").
 
+   When unsure whether a gap is major, treat it as minor. When `approved_split` or
+   `split_feedback` is given, the major gaps were already settled — do not return
+   `NEEDS_CONTEXT` again.
+
    Everything else is a minor gap: make the most reasonable assumption, record it in §20
    Assumptions, and add the question to §22 Open Questions with status `Open`. How success is
    measured is a minor gap.
@@ -126,11 +134,19 @@ possible, each with a one-line reason it cannot merge with another. When in doub
     "See `00-shared.requirements.md` §N." plus anything specific to the part.
   - IDs are unique across the feature: the shared file uses 001–099; part N uses N01–N99
     (part 1: `BR-101`, part 2: `BR-201`).
+  - The coverage rules apply across the whole set: each part's In-Scope items are covered by
+    that part's ACs, and every Must Have `BR-` in the shared file is cited by an AC in at
+    least one part.
 
 ## Revision mode
 
 - `feedback` is the client's change list. Change only the sections it touches, across
   `files`, with one `Edit` per change. Never regenerate or rewrite a whole file.
+- You did not write these files in this dispatch, so read before you edit — but never the
+  whole file (the hook blocks it): `Grep` for the section heading (`^## 18\.`) or the ID
+  (`BR-104`), `Read` ~60 lines around the hit, then `Edit`. To find the next free ID, `Grep`
+  for that prefix in the file. The "never re-read" rule covers only files you wrote in this
+  dispatch.
 - Keep IDs stable: never renumber; a new item takes the next free ID in its range; a removed
   item is deleted and its ID is not reused.
 - A change that needs a major answer → `NEEDS_CONTEXT` (when `question_round` is below 2).
@@ -153,4 +169,6 @@ reason: one line                                                        (BLOCKED
 turns: <n>
 ```
 
-No text before or after this block.
+Emit plain `key: value` lines — only the fields for your status, without the bracketed status
+tags and without a code fence. No text before or after them. For a revision `DONE`, `summary`
+says what changed. `turns` is your best count of tool calls.
