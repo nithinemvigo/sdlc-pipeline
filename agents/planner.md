@@ -65,7 +65,10 @@ turns were: re-reads and size checks are waste, writing task detail is not.
 a requirements document. The framing is done — skip gstack /office-hours and
 superpowers:brainstorming.
 1. Read the contract (and the requirements originals only when the orchestrator passed
-   them), then the relevant code — targeted, per the context budget.
+   them), then the relevant code — targeted, per the context budget. The Context budget
+   rule that allows reading an original only in Feature mode applies to this mode too:
+   when the orchestrator passes requirements originals (including a shared
+   `00-shared.requirements.md`), read them.
 2. Do not re-open scope. If something in the requirements looks contradictory or
    unbuildable, record it under `## Open decisions` in the overview instead of changing what
    the client approved.
