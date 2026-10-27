@@ -336,7 +336,7 @@ accounts for:
 
 ## 12. Open items for the user
 
-1. The QA agent's final name and its outputs — needed to decide whether Stage Q gets an
-   approval gate and how later stages (e.g. `qa-tester` at Stage 4.5) consume its outputs.
+1. The QA agent — replaced by the BA requirements analysis; see
+   `docs/superpowers/specs/2026-10-27-ba-requirements-integration-design.md`.
 2. The full `requirements-writer` instructions — designed in
    `docs/superpowers/specs/2026-10-27-requirements-writer-design.md`.
