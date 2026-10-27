@@ -208,6 +208,16 @@ SPEC_DOC_EXTS = (".md", ".markdown")
 DERIVED_ARTIFACTS = ["*.contract.md", "*-slice.md", "*-slice-delta.md", "task-*.md", "00-overview.md"]
 
 
+def _loose_key(stem: str) -> str:
+    """Normalised stem for the loose contract match.
+
+    Strips a trailing `.requirements`: every requirements document shares it, and on its own
+    it is 12 characters - enough to pass the length guard and match unrelated short names.
+    """
+    stem = re.sub(r"\.requirements$", "", stem, flags=re.IGNORECASE)
+    return re.sub(r"[^a-z0-9]+", "", stem.lower())
+
+
 def contract_beside(path: str):
     """If `path` is an original spec DOCUMENT that has been distilled, return the contract.
 
@@ -237,7 +247,7 @@ def contract_beside(path: str):
             return cand
 
     # 2. a renamed contract in a known folder whose stem overlaps this one
-    norm = re.sub(r"[^a-z0-9]+", "", stem.lower())
+    norm = _loose_key(stem)
     for d in (directory,) + CONTRACT_DIRS:
         if d and not os.path.isdir(d):
             continue
@@ -248,8 +258,8 @@ def contract_beside(path: str):
         for e in entries:
             if not e.endswith(CONTRACT_SUFFIX):
                 continue
-            other = re.sub(r"[^a-z0-9]+", "", e[: -len(CONTRACT_SUFFIX)].lower())
-            if len(other) >= 12 and (other in norm or norm in other):
+            other = _loose_key(e[: -len(CONTRACT_SUFFIX)])
+            if len(other) >= 12 and len(norm) >= 12 and (other in norm or norm in other):
                 return os.path.join(d, e) if d else e
     return None
 
