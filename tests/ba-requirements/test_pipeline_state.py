@@ -693,7 +693,7 @@ class CommandFileTests(unittest.TestCase):
         self.assertIn("after a resume the gate is evaluated again", self.run_md)
         self.assertIn("refuses (exit 1, `blocked_operation` `gate_validation`)", self.run_md)
         step6 = self.run_md[self.run_md.index("## Step 6"):self.run_md.index("## Step 7")]
-        self.assertLess(step6.index("pipeline-state.py start --operation generate_stories"), step6.index("Follow `generate-stories.md`"))
+        self.assertLess(step6.index("pipeline-state.py start --operation generate_stories"), step6.index("Follow `ba-generate-stories.md`"))
 
     def test_run_command_asks_before_restarting_on_a_changed_source(self):
         self.assertIn("restart from source analysis", self.run_md)

@@ -102,7 +102,7 @@ class CommandFileTests(unittest.TestCase):
         self.assertIn("gap-register-store.py list", self.text[gate:self.text.index("## Step 1")])
         step6 = self.text[self.text.index("## Step 6"):self.text.index("## Step 7")]
         self.assertIn("Precondition: the story-generation gate must have passed", step6)
-        self.assertLess(step6.index("Precondition"), step6.index("Follow `generate-stories.md`"))
+        self.assertLess(step6.index("Precondition"), step6.index("Follow `ba-generate-stories.md`"))
 
     def test_skip_paths_return_to_the_gate_not_to_phase_3(self):
         step5 = self.text[self.text.index("## Step 5"):self.text.index("## Step 6")]

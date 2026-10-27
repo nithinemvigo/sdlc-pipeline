@@ -153,7 +153,7 @@ Staleness evidence for a valid existing file in a run that has no earlier record
 
 Operation 2, `atomic_requirements`. Skipped when a resume reused it. `pipeline-state.py start --operation atomic_requirements` first.
 
-If reusing the existing file, skip to the gate. Otherwise follow `start-analysis.md` Steps 4–7 (draft location, Requirement Analyst, independent validation, safe persistence), calling `check-inputs` right before its Step 7 writes. Step 1 of that file (the source question) and the confirmation in Step 3 are already done.
+If reusing the existing file, skip to the gate. Otherwise follow `ba-start-analysis.md` Steps 4–7 (draft location, Requirement Analyst, independent validation, safe persistence), calling `check-inputs` right before its Step 7 writes. Step 1 of that file (the source question) and the confirmation in Step 3 are already done.
 
 **Gate — must pass to continue.** The saved `atomic_requirements/atomic_requirements.json` must pass:
 
@@ -167,7 +167,7 @@ Then `pipeline-state.py complete --operation atomic_requirements`. Stop the pipe
 
 Operation 3, `gap_analysis`. Skipped when a resume reused it. `pipeline-state.py start --operation gap_analysis` first. Gap analysis must complete before triage and story generation.
 
-Follow `analyse-gaps.md` Steps 1–7 and 9 (inspect, agent, validation, reconciliation review, safe save, verify), calling `check-inputs` right before its Step 7 save. Reconciliation of an existing register, including keep/reopen and retire decisions, is asked of the user exactly as that file specifies. A destructive reset (its Step 8) happens only if the user asks for it.
+Follow `ba-analyse-gaps.md` Steps 1–7 and 9 (inspect, agent, validation, reconciliation review, safe save, verify), calling `check-inputs` right before its Step 7 save. Reconciliation of an existing register, including keep/reopen and retire decisions, is asked of the user exactly as that file specifies. A destructive reset (its Step 8) happens only if the user asks for it.
 
 **Gate — must pass to continue.** `validate-gap-register.py` passes on the saved `gaps/gaps.json`, `gap-register-store.py inspect` reports `UNCHANGED`, and `gaps/gap-analysis.html` exists (a failed HTML regeneration with a saved, valid register is a warning: run `regenerate-report` once, then continue and report it as stale if it still fails). Then `pipeline-state.py complete --operation gap_analysis`. Stop the pipeline (Step 9) on `INPUT_*`, `REGISTER_INVALID`, a failed save or a failed validation. If the register is empty (no gaps), say so and continue to Phase 3 with triage skipped (the story-generation gate passes because there is nothing to resolve).
 
@@ -183,7 +183,7 @@ Otherwise run triage, then the gate.
 
 ### 5a — First triage pass
 
-`pipeline-state.py start --operation gap_triage` first (a resumed triage simply starts again and presents the remaining open and skipped gaps, Critical and High first). Follow `triage-gaps.md` Steps 1–3 (the `gap-triage` skill): one gap at a time, Critical first, each decision confirmed before it is recorded and saved immediately through the store, and each answer, skip or status change recorded at once with `triage-event` (see "Checkpoint protocol"). The user can:
+`pipeline-state.py start --operation gap_triage` first (a resumed triage simply starts again and presents the remaining open and skipped gaps, Critical and High first). Follow `ba-triage-gaps.md` Steps 1–3 (the `gap-triage` skill): one gap at a time, Critical first, each decision confirmed before it is recorded and saved immediately through the store, and each answer, skip or status change recorded at once with `triage-event` (see "Checkpoint protocol"). The user can:
 
 - provide a decision, which resolves the gap once confirmed;
 - **skip** the current gap (it becomes `skipped` and stays unresolved). If the gap is Critical or High, say in one line that it still blocks story generation until it is resolved;
@@ -219,9 +219,9 @@ Run `gap-register-store.py summary` and record gaps presented / resolved / skipp
 
 Operation 6, `generate_stories`. Skipped when a resume reused it.
 
-**Precondition: the story-generation gate must have passed.** Run `pipeline-state.py start --operation generate_stories` first; it re-evaluates the gate itself and refuses (exit 1, `blocked_operation` `gate_validation`) while a Critical or High gap is `open` or `skipped`, or the gate cannot be verified, and it puts `gate_validation` back to `blocked`. Then, immediately before the `apply` call in `generate-stories.md` Step 7 (dry run and real write), evaluate the gate again with a fresh `list` and call `check-inputs`; the register may have changed since Step 5. If either fails, do not write anything: return to Step 5b. Never run, resume or partially run this step while a Critical or High gap is `open` or `skipped`. This applies equally on a resume where stories already exist.
+**Precondition: the story-generation gate must have passed.** Run `pipeline-state.py start --operation generate_stories` first; it re-evaluates the gate itself and refuses (exit 1, `blocked_operation` `gate_validation`) while a Critical or High gap is `open` or `skipped`, or the gate cannot be verified, and it puts `gate_validation` back to `blocked`. Then, immediately before the `apply` call in `ba-generate-stories.md` Step 7 (dry run and real write), evaluate the gate again with a fresh `list` and call `check-inputs`; the register may have changed since Step 5. If either fails, do not write anything: return to Step 5b. Never run, resume or partially run this step while a Critical or High gap is `open` or `skipped`. This applies equally on a resume where stories already exist.
 
-Follow `generate-stories.md` Steps 1–8 with these hand-offs:
+Follow `ba-generate-stories.md` Steps 1–8 with these hand-offs:
 
 - **Target document.** If the confirmed source in Step 2 is a single `.md` file, use it as `--target`. If several files were confirmed, ask the user to select the single primary document that holds the `# Development Stories` section (Step 3 of that file). If `inspect` already shows a recorded target, reuse it and do not ask again. Never add the section to several files.
 - **Gap register.** The register was validated in Phase 2, so pass no `--ignore-gaps`. If the register has become invalid or unreadable, stop the pipeline (Step 9); do not continue without gap context from this command. The user can run `/sdlc-pipeline:ba-generate-stories` on its own to make that choice explicitly.
@@ -236,7 +236,7 @@ Then `pipeline-state.py complete --operation generate_stories`, which checks the
 
 ## Step 7 — Phase 3: enrichment and report
 
-**Enrichment.** Operation 7, `enrich_stories`; `pipeline-state.py start --operation enrich_stories` first, `check-inputs` before its `apply`, and `complete` after it (which refuses while resolved decisions are not yet reflected in the stories). Skipped when a resume reused it. Run `sync-development-stories.py inspect` again. Then follow `enrich-stories.md` Steps 2–9:
+**Enrichment.** Operation 7, `enrich_stories`; `pipeline-state.py start --operation enrich_stories` first, `check-inputs` before its `apply`, and `complete` after it (which refuses while resolved decisions are not yet reflected in the stories). Skipped when a resume reused it. Run `sync-development-stories.py inspect` again. Then follow `ba-enrich-stories.md` Steps 2–9:
 
 - Use only confirmed decisions from **resolved** gaps. Open and skipped gaps are not decisions.
 - With `pending_decisions` empty and no reopened gap needing a change, that file's Step 4 applies: report that no enrichment was required, change no story.
@@ -244,7 +244,7 @@ Then `pipeline-state.py complete --operation generate_stories`, which checks the
 
 Record: decisions incorporated, decisions needing no story change, stories enriched (from `apply`), stories unchanged, validation result.
 
-**Report.** Operation 8, `phase3_report`; `pipeline-state.py start --operation phase3_report` first and `complete` after. Skipped when a resume reused it. Follow `generate-report.md` to refresh `report/phase3-report.html` from the authoritative artifacts, unless an `apply` in this run already produced it and `summary` shows it current. The report shows development stories, open gaps, resolved gaps, skipped gaps, recorded business decisions, summary counts and a generation timestamp; stories, gaps and decisions stay in their own sections and no gap or requirement metadata appears inside a story entry. All of that is done by the script; you only check the result.
+**Report.** Operation 8, `phase3_report`; `pipeline-state.py start --operation phase3_report` first and `complete` after. Skipped when a resume reused it. Follow `ba-generate-report.md` to refresh `report/phase3-report.html` from the authoritative artifacts, unless an `apply` in this run already produced it and `summary` shows it current. The report shows development stories, open gaps, resolved gaps, skipped gaps, recorded business decisions, summary counts and a generation timestamp; stories, gaps and decisions stay in their own sections and no gap or requirement metadata appears inside a story entry. All of that is done by the script; you only check the result.
 
 If report generation fails: the requirements document and the state are valid and stay as they are, the previous report is retained, and `phase3_report` is recorded `failed` (`pipeline-state.py fail`) with its reason, so the run is not marked completed. Go to Step 9 with status `STOPPED`; the summary says clearly that the report is **STALE** (a previous report exists) or **UNAVAILABLE** (none exists), with the reason, and that `/sdlc-pipeline:ba-run` with Resume reruns only the report (or `/sdlc-pipeline:ba-generate-report` as the fix). This is not a reason to undo anything. Never print `GENERATED` for it.
 
