@@ -49,7 +49,9 @@ grep -H -o '"claude-mem[^"]*"[[:space:]]*:[[:space:]]*\(true\|false\)' \
 echo "1H=${ENABLE_PROMPT_CACHING_1H:-unset}"
 echo "PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-unset}}"
 echo "HOME=$HOME"
-git show-ref --verify -q refs/heads/main && echo BASE_BRANCH=main || echo BASE_BRANCH=master
+B=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+[ -n "$B" ] || { git show-ref --verify -q refs/heads/main 2>/dev/null && B=main || B=master; }
+echo "BASE_BRANCH=$B"
 ```
 
 Record the printed `PLUGIN_ROOT` and `HOME` values as `<PLUGIN_ROOT>` and `<HOME>`, and
@@ -123,10 +125,10 @@ A request that is not clearly a bug gets no question.
      `docs/features/<slug>/`. One Bash call:
      `ls -d docs/features/<slug>.requirements.md docs/features/<slug>/*.requirements.md 2>/dev/null; rm -f docs/features/<slug>.requirements.contract.md docs/features/<slug>/*.contract.md`.
      If anything exists, ask once: **Use the existing file** (for a split folder, ask which
-     part; show only its path — you do not read the file — record `<slug>`, and for a part
-     `REMAINING_PARTS` and `part K of P`, as above from the same listing, then continue exactly as the part-path
-     bullet above, so the approved-earlier skip and the earlier-part check run; the
-     summary, counts and Open Questions are not available) |
+     part; you do not read the file) — then, for the single file or the chosen part,
+     continue exactly as the part-path bullet above with that path as the request: it sets
+     `<slug>`, `REMAINING_PARTS` and `part K of P`, and runs the approved-earlier skip and
+     the earlier-part check; the summary, counts and Open Questions are not available |
      **Regenerate** (delete the listed files in one Bash call, then dispatch the writer).
 2. **Dispatch `requirements-writer`** with:
    - `mode: draft`, `question_round: 0`
