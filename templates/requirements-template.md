@@ -2,8 +2,9 @@
 
 <!--
 sdlc-pipeline requirements template v1.
-- Fill every section marked _Required_. An _Optional_ section may be deleted, or kept with
-  "Not applicable."
+- Fill every section marked _Required_.
+- Never delete or renumber sections. If an _Optional_ section does not apply, keep its
+  heading and write "Not applicable." (Other agents cite sections by number.)
 - IDs (BR-, VAL-, AC-, Q-) start at 001 and are never reused.
 - Technical detail (table names, endpoints, regexes, services) is allowed ONLY under a
   "### Technical notes" heading, and only in sections 10, 11, 18 and 21. Everything else

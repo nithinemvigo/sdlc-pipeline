@@ -1,6 +1,6 @@
 # sdlc-pipeline
 
-An autonomous SDLC orchestrator plugin for Claude Code, Claude Cowork, and Cursor. One command — `/pipeline` — takes a feature or bug from raw request to shipped PR through planning, review gauntlets, TDD execution, testing gates, security review, docs, and ship.
+An autonomous SDLC orchestrator plugin for Claude Code, Claude Cowork, and Cursor. Three commands — `/pipeline`, `/pipeline-parallel` and `/pipeline-all` — take a feature or bug from raw request to shipped PR through planning, review gauntlets, TDD execution, testing gates, security review, docs, and ship.
 
 Built on top of **superpowers**, **gstack**, and **claude-mem** — all three are required and must be installed first (see [Prerequisites](#prerequisites)).
 
@@ -189,7 +189,7 @@ Stage 0    Bug guard (bugs → /pipeline)
 Stage R    Requirements (requirements-writer) ── ★ YOU APPROVE THE REQUIREMENTS ★
 Stage Q    QA slot (qa-placeholder), may ask you for input
 Stage 0.5  Your preferences: TDD, unit tests
-Stage 0.8  Distil requirements → contract
+Stage 0.8  Requirements → contract (distil if large, else copy)
 Stage 1 →  Same as the FEATURE track above (plan, reviews, ★ plan approval ★, build, gates, ship)
 ```
 

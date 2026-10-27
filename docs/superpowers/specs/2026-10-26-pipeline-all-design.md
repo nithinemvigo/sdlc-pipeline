@@ -45,7 +45,7 @@ Stage -1   Preflight                       unchanged from pipeline.md
 Stage R    Requirements                    requirements-writer  ⇄ user (questions, then approve / request changes)
 Stage Q    QA slot                         qa-placeholder       ⇄ user (input when needed)
 Stage 0.5  TDD + unit-test questions       TYPE fixed to feature — bug/feature question removed
-Stage 0.8  Distil requirements → contract  unchanged mechanics; source = approved requirements file
+Stage 0.8  Requirements → contract         source = approved requirements file; distil if large, else copy (§6)
 Stage 1    Plan                            unchanged (feature track)
 Stage 2    Plan review gauntlet            unchanged
 Stage 2.5  Client plan approval            unchanged
@@ -70,28 +70,39 @@ question.
 ### 4.1 Orchestrator steps
 
 1. **Slug and output path.** Derive `<slug>` (kebab-case, ≤5 words) from the request. Output
-   path `docs/features/<slug>.requirements.md`.
+   path `docs/features/<slug>.requirements.md`. The existence check is one Bash call that also
+   runs `rm -f docs/features/<slug>.requirements.contract.md` (see §8).
    - If that file already exists, ask once: **Use existing file as-is** (show only its path,
      since the orchestrator does not read the file, and ask the step-4 question; the summary,
      counts and Open Questions are not available) | **Regenerate** (overwrite).
 2. **Dispatch `requirements-writer`** in `draft` mode (inputs in 4.2).
 3. **`NEEDS_CONTEXT`** → relay the numbered questions to the user in ONE batched message,
-   then re-dispatch in the same mode the agent was dispatched in, with the answers. A
+   then re-dispatch in the same mode the agent was dispatched in, with the answers and
+   `question_round` + 1. Answers are cumulative across rounds and are passed in both modes. A
    `NEEDS_CONTEXT` from a `revision` dispatch is answered with a `revision` re-dispatch
    carrying the same `feedback` plus the answers (revision mode never regenerates the file).
-   At most **2** question rounds; on the third dispatch the agent must draft, recording
-   anything still unknown as Open Questions and Assumptions.
+   At most **2** question rounds; at `question_round: 2` the agent must write (draft) or
+   apply (revision) without further questions, recording anything still unknown as Open
+   Questions and Assumptions.
 4. **`DONE` → confirmation gate (HARD GATE).** In one turn, show: the file path, the agent's
    summary (≤5 lines), the counts (BR / AC / open questions), and the list of questions still
    **Open**. Ask with `AskUserQuestion`: **Approve requirements** | **Request changes**.
+   - **Approve requirements** → one Bash call, no read, sets the file's header row to
+     `| Status | Approved |` (`sed -i` on `| Status | Draft |`).
    - **Request changes** → collect the user's feedback verbatim and re-dispatch in
-     `revision` mode. Loop back to this gate.
+     `revision` mode with `question_round: 0`, the cumulative answers and `input_files`.
+     Loop back to this gate.
    - Count revisions. **At 4**, stop and offer: (a) approve as-is and treat the rest as Open
      Questions, (b) keep revising, (c) restart from a tightened brief — mirroring the
      Stage 2.5 planner cap.
 5. **`PLACEHOLDER`** → print one line (`Requirements agent not yet implemented — continuing
    with the raw request.`), record `REQUIREMENTS: none`, and continue to Stage Q. No gate.
-6. Record in the ledger: `REQUIREMENTS: <path> (approved, rounds: N)` or `REQUIREMENTS: none`.
+   Exception: if the user chose **Use existing file** and a later `revision` dispatch returns
+   `PLACEHOLDER`, keep the file, record `REQUIREMENTS: <path> (existing, unrevised)`, tell the
+   user in one line that the changes could not be applied because the agent is not
+   implemented yet, and continue. Stage 0.8 treats `(existing, unrevised)` like approved.
+6. Record in the ledger: `REQUIREMENTS: <path> (approved, revisions: N)`,
+   `REQUIREMENTS: <path> (existing, unrevised)` or `REQUIREMENTS: none`.
 
 The orchestrator **never reads the requirements file** (context discipline rule 2). Everything
 it shows at the gate comes from the agent's return. The user opens the file themselves.
@@ -115,13 +126,13 @@ model: sonnet
 |---|---|
 | `mode` | `draft` or `revision` |
 | `request` | the client's request, verbatim |
-| `input_files` | paths of any files the client referenced (may be empty) |
-| `template` | `${CLAUDE_PLUGIN_ROOT}/templates/requirements-template.md` (Cursor: `${PLUGIN_ROOT}`) |
+| `input_files` | paths of any files the client referenced (may be empty); passed in revision mode too |
+| `template` | `<PLUGIN_ROOT>/templates/requirements-template.md`, resolved at Stage -1 (see §6) |
 | `output` | `docs/features/<slug>.requirements.md` |
 | `repo_root` | repository root |
-| `answers` | answers to earlier `NEEDS_CONTEXT` questions (draft mode, optional) |
+| `answers` | answers to earlier `NEEDS_CONTEXT` questions, cumulative (both modes) |
 | `feedback` | the client's change requests, verbatim (revision mode only) |
-| `question_round` | 0, 1 or 2 — at 2 the agent must not return `NEEDS_CONTEXT` |
+| `question_round` | 0, 1 or 2 — starts at 0 for each draft and for each revision round; at 2 the agent must not return `NEEDS_CONTEXT` |
 
 **What counts as a major question** (return `NEEDS_CONTEXT`): the answer would change what the
 feature *is* — its purpose, who uses it, what is in or out of scope, or a core user journey —
@@ -202,12 +213,13 @@ updating the agent file name, its `name:` field, and the Stage Q dispatch line i
 | Stage | Change in `pipeline-all.md` |
 |---|---|
 | Header / description | New description: requirements-first feature pipeline. `argument-hint: <feature idea text and/or file path(s)>`. |
+| Stage -1 | The preflight Bash block also prints `PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-unset}}`; the value is recorded and Stage R passes `<PLUGIN_ROOT>/templates/requirements-template.md`. If it printed `unset`, one Glob for `**/templates/requirements-template.md`; if none, HALT (the plugin's template is missing). |
 | Stage 0.5 | Only two questions (TDD, unit-test round), one batched `AskUserQuestion`. `TYPE: feature` is set without asking. |
-| Stage 0.8 | Source = the approved requirements file. If `REQUIREMENTS: none`, behave exactly as `pipeline.md` (use any spec the client referenced); if there is none, record `CONTRACT: none` and skip to Stage 1. When the source is under the 4,000-token threshold it is passed directly and `<contract>` = `<source>`. Contract output path: **`docs/features/<slug>.requirements.contract.md`** (see §8). When a contract exists, Global Constraints record the requirements file as the distilled original. |
-| Stage 1 | The planner receives the contract path (or the requirements path directly when it is under the 4,000-token threshold) only when one exists, i.e. not `CONTRACT: none`. Paths to files the client referenced are passed only when the ledger says `REQUIREMENTS: none`; once requirements are approved they are the source of truth and the planner does not get the raw client files. |
-| Stage 2 | When the ledger says `CONTRACT: none`: leave `<contract>` out of the `wc -c` line, do not run the plan lint, and record `LINT_SKIPPED: no source document`. The completeness check still runs. |
+| Stage 0.8 | Source = the approved (or `existing, unrevised`) requirements file. If `REQUIREMENTS: none`, behave exactly as `pipeline.md` (use any spec the client referenced). One ledger value, `CONTRACT: distilled \| copied \| none`: over the 4,000-token threshold the distiller writes the contract (`distilled`); under it, the same Bash call as the `wc` copies the source to `docs/features/<source stem>.contract.md` (`copied`), so reviewers can read it; no source → `none`, skip to Stage 1. Contract output path for the requirements file: **`docs/features/<slug>.requirements.contract.md`** (see §8). Global Constraints say "distilled from" or "copied from" the source; none when `CONTRACT: none`. One guard rule: a later stage omits the contract path when `CONTRACT: none`; `UNCONFIRMED` items and distiller top-up apply only when `distilled`. **Requirements mode:** when the requirements file is distilled, the dispatch tells the distiller to keep every `BR-`, `VAL-` and `AC-` item, scope bullets, error/edge scenarios and non-functional rows, overriding its "What stays out" list. |
+| Stage 1 | The planner receives the contract path only when one exists, i.e. not `CONTRACT: none`. When requirements exist, it also receives the approved requirements file, labelled as the original it may read (Feature mode), as the source of truth; its overview's `FR-NN` rows each cite the `BR-xxx` / `AC-xxx` IDs they cover, and every Must Have `BR-xxx` appears in at least one FR row. Paths to files the client referenced are passed only when the ledger says `REQUIREMENTS: none`; once requirements are approved the planner does not get the raw client files. |
+| Stage 2 | When the ledger says `CONTRACT: none`: leave `<contract>` out of the `wc -c` line, do not run the plan lint, record `LINT_SKIPPED: no source document`, and pass reviewers only the slice path. The completeness check still runs. The contract > 9,000 size cap applies only when `CONTRACT: distilled`; a copied contract is the client-approved text and is never shrunk. |
 | Stage 2.5 | Also surface any requirements Open Questions still `Open` alongside the contract's `UNCONFIRMED` items; write "none reported" when Stage R returned none. |
-| Token ledger | Add rows for `requirements-writer` and `qa-placeholder` dispatches and the requirements revision count. |
+| Token ledger | Add rows for `requirements-writer` and `qa-placeholder` dispatches and the requirements revision count (`requirements: <path> (approved, revisions: N)`), plus `contract: distilled \| copied \| none`. |
 | Hard rules | Add: never skip the Stage R gate when the agent returned `DONE`; never start Stage 0.5 before Stage R and Stage Q have completed; bug requests are redirected per §3. |
 | Everything else | Byte-for-byte the same as `pipeline.md`, minus bug/nano branches. |
 
@@ -215,7 +227,9 @@ updating the agent file name, its `name:` field, and the Stage Q dispatch line i
 
 File: `templates/requirements-template.md`. Built from the supplied EMV sample, with all
 sample content replaced by one-line guidance comments (`<!-- … -->`) so the agent never copies
-project-specific text. Every section carries a `Required` or `Optional` marker.
+project-specific text. Every section carries a `Required` or `Optional` marker. Sections are
+never deleted or renumbered: an Optional section that does not apply keeps its heading and
+says "Not applicable." (other agents cite sections by number).
 
 | § | Section | Req/Opt | Notes |
 |---|---|---|---|
@@ -267,12 +281,19 @@ accounts for:
 
 - **Full-read limit** (250 lines / 20,000 bytes): both agent contracts require chunked reads.
 - **"Only distiller/planner may read the original once a contract exists"**: Stage R and
-  Stage Q run *before* Stage 0.8, so they are unaffected.
+  Stage Q run *before* Stage 0.8, so they are unaffected — provided no contract from an
+  earlier run is left beside the requirements file. Stage R therefore runs
+  `rm -f docs/features/<slug>.requirements.contract.md` in its existence-check Bash call; a
+  stale contract would make the hook redirect agents away from the new requirements. Stage 0.8
+  re-creates it.
+- **Reviewer allowlist:** `ceo-reviewer`, `eng-reviewer` and `design-reviewer` may read only
+  slices and `*.contract.md`. A source under the threshold is therefore copied to
+  `docs/features/<source stem>.contract.md` rather than passed directly.
 - **Contract naming.** The hook links an original to its contract by exact filename stem
   (`<stem>.contract.md`), with a fallback overlap match that needs ≥12 normalised characters.
   A contract named `<slug>.contract.md` would fail to match `<slug>.requirements.md` for short
-  slugs, leaving the original unprotected. Therefore, when Stage 0.8 distils (file over the
-  4,000-token threshold), `pipeline-all.md` writes
+  slugs, leaving the original unprotected. Therefore, whether Stage 0.8 distils (file over the
+  4,000-token threshold) or copies (under it), `pipeline-all.md` writes
   **`docs/features/<slug>.requirements.contract.md`**.
 - **Known limitation:** if a client passes as *input* a `.md` file that already has a contract
   beside it (from an earlier run), the hook will block `requirements-writer` from reading it.

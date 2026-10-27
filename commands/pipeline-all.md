@@ -5,7 +5,7 @@ argument-hint: <feature idea text and/or file path(s)>
 
 # /pipeline-all — Requirements-first SDLC Orchestrator
 
-You are the **orchestrator**. You never write production code. You classify the request,
+You are the **orchestrator**. You never write production code. You check the request (Stage 0),
 dispatch specialist agents via the Task tool, enforce quality gates, and interrupt the
 client only for genuine decisions.
 
@@ -32,7 +32,7 @@ Rationale and measurements: `CONTEXT-DISCIPLINE.md`. Do not read it — these ar
 
 ## Stage -1 — Preflight (ALWAYS FIRST)
 
-Three REQUIRED dependencies. Check all three before any classification or dispatch.
+Three REQUIRED dependencies. Check all three before Stage 0 or any dispatch.
 
 **superpowers** — look for `superpowers:brainstorming`, `superpowers:writing-plans`,
 `superpowers:executing-plans` in your available-skills list.
@@ -47,7 +47,10 @@ grep -H -o '"claude-mem[^"]*"[[:space:]]*:[[:space:]]*\(true\|false\)' \
   ~/.claude/settings.json ~/.claude/settings.local.json \
   .claude/settings.json .claude/settings.local.json 2>/dev/null
 echo "1H=${ENABLE_PROMPT_CACHING_1H:-unset}"
+echo "PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-unset}}"
 ```
+
+Record the printed `PLUGIN_ROOT` value as `<PLUGIN_ROOT>`; Stage R uses it.
 
 - `: true` and no `: false` → pass.
 - any `: false` → disabled (a project-level `false` overrides the user file) → HALT.
@@ -86,29 +89,40 @@ A request that is not clearly a bug gets no question.
 ## Stage R — Requirements (HARD GATE)
 
 1. **Slug and path.** Derive `<slug>` from the request (kebab-case, at most 5 words). The
-   requirements path is `docs/features/<slug>.requirements.md`. If it already exists, ask
-   once: **Use the existing file** (show only its path — you do not read the file — and ask the
-   step-4 question; the summary, counts and Open Questions are not available) |
+   requirements path is `docs/features/<slug>.requirements.md`. Check for it in one Bash call
+   that also removes any stale contract (Stage 0.8 re-creates it; an old contract would make
+   the context-budget hook redirect agents away from the new requirements):
+   `ls docs/features/<slug>.requirements.md 2>/dev/null; rm -f docs/features/<slug>.requirements.contract.md`.
+   If the file already exists, ask once: **Use the existing file** (show only its path — you
+   do not read the file — and ask the step-4 question; the summary, counts and Open Questions are not available) |
    **Regenerate** (overwrite it).
 2. **Dispatch `requirements-writer`** with:
    - `mode: draft`, `question_round: 0`
    - `request`: the client request, verbatim
    - `input_files`: paths of any files the client referenced, or `none`
-   - `template`: `${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/templates/requirements-template.md`
+   - `template`: `<PLUGIN_ROOT>/templates/requirements-template.md`, using the value Stage -1
+     printed. If it printed `unset`, find the template with one Glob for
+     `**/templates/requirements-template.md`; if none, HALT and say the plugin's template is
+     missing.
    - `output`: the requirements path
    - `repo_root`
 3. **`NEEDS_CONTEXT`** → relay its numbered questions to the client in ONE batched message,
    then re-dispatch in the same mode the agent was dispatched in, with `answers` and
-   `question_round` + 1. A `NEEDS_CONTEXT` from a `revision` dispatch is answered with a
-   `revision` re-dispatch carrying the same `feedback` plus `answers` (revision mode must
-   never regenerate the file). At `question_round: 2` the agent must draft, recording
-   anything still unknown as Open Questions and Assumptions.
+   `question_round` + 1. `answers` are cumulative — every answer given so far in Stage R,
+   across rounds — and are passed in both modes. A `NEEDS_CONTEXT` from a `revision` dispatch
+   is answered with a `revision` re-dispatch carrying the same `feedback` plus `answers`
+   (revision mode must never regenerate the file). At `question_round: 2` the agent must
+   write (draft) or apply (revision) without further questions, recording anything still
+   unknown as Open Questions and Assumptions.
 4. **`DONE` → client confirmation.** In ONE turn show the requirements path, the agent's
    summary, its counts (BR / VAL / AC / Open Q) and its list of questions still Open. Then
    ask with `AskUserQuestion`: **Approve requirements** | **Request changes**.
+   - **Approve requirements** → mark the file approved in one Bash call, without reading it:
+     `sed -i 's/^| Status | Draft |/| Status | Approved |/' <path>`.
    - **Request changes** → take the client's feedback verbatim and re-dispatch in
-     `revision` mode with `feedback`, plus the same `request`, `template`, `output` and
-     `repo_root`. Return to this step.
+     `revision` mode with `feedback`, `question_round: 0`, the cumulative `answers`, plus
+     the same `request`, `input_files`, `template`, `output` and `repo_root`. Return to this
+     step.
    - Count each revision in `requirements_revisions`. **At 4, stop** and say:
 
      > We've revised the requirements 4 times. Options: (a) approve as-is and keep the
@@ -117,15 +131,21 @@ A request that is not clearly a bug gets no question.
 5. **`PLACEHOLDER`** → say `Requirements agent not yet implemented — continuing with the raw
    request.` on the same turn as the Stage Q dispatch, record `REQUIREMENTS: none`, and go
    to Stage Q. No gate.
-6. Ledger: `REQUIREMENTS: <path> (approved, rounds: N)` or `REQUIREMENTS: none`.
+   - **Exception:** if the client chose **Use the existing file** and a later `revision`
+     dispatch returns `PLACEHOLDER`, keep the file: record
+     `REQUIREMENTS: <path> (existing, unrevised)`, tell the client in one line that their
+     changes could not be applied because the requirements agent is not implemented yet, and
+     continue to Stage Q.
+6. Ledger: `REQUIREMENTS: <path> (approved, revisions: N)`,
+   `REQUIREMENTS: <path> (existing, unrevised)` or `REQUIREMENTS: none`.
 
 You do not read the requirements file. Everything you show the client comes from the agent's
-return, and the client opens the file themselves. Never start Stage Q without an approval or
-`REQUIREMENTS: none` in the ledger.
+return, and the client opens the file themselves. Never start Stage Q without an approval,
+`(existing, unrevised)` or `REQUIREMENTS: none` in the ledger.
 
 ## Stage Q — QA slot
 
-Dispatch `qa-placeholder` with `requirements` (the approved path, or `none`), `request`
+Dispatch `qa-placeholder` with `requirements` (the approved or existing path, or `none`), `request`
 (verbatim) and `repo_root`.
 
 - **`NEEDS_INPUT`** → relay its numbered questions to the client in ONE batched message and
@@ -156,29 +176,58 @@ Regardless of the answers, the existing full test suite must pass before any PR
 
 ## Stage 0.8 — Distil the requirements (MANDATORY when a source document exists)
 
-`<source>` is the approved requirements file, `docs/features/<slug>.requirements.md`. If the
-ledger says `REQUIREMENTS: none`, `<source>` is any spec the client referenced instead; if
+`<source>` is the requirements file, `docs/features/<slug>.requirements.md`, when the ledger
+says `REQUIREMENTS: <path> (approved…)` or `(existing, unrevised)` — treat both the same. If
+the ledger says `REQUIREMENTS: none`, `<source>` is any spec the client referenced instead; if
 there is none, record `CONTRACT: none` in the ledger and skip to Stage 1.
 
-1. `wc -c -l <source>`. Estimate tokens as `chars / 3`.
-2. Under 4,000 tokens → pass the path directly, note it in the ledger, skip to Stage 1. In
-   this case `<contract>` = `<source>`: the source file itself serves as the contract.
+The ledger value `CONTRACT: distilled | copied | none` records which case applies.
+
+1. One Bash call measures the source and, when it is small, copies it to the contract path.
+   Estimate tokens as `chars / 3` (12,000 chars ≈ 4,000 tokens):
+
+   ```bash
+   wc -c -l <source>
+   if [ "$(wc -c < <source>)" -lt 12000 ]; then
+     mkdir -p docs/features && cp <source> docs/features/<source stem>.contract.md && echo "CONTRACT: copied"
+   fi
+   ```
+
+2. Under 4,000 tokens → that call made the copy. Record `CONTRACT: copied`; `<contract>` =
+   `docs/features/<source stem>.contract.md`. Skip to Stage 1. Wherever a stage passes the
+   contract path, pass the copy, not `<source>`: reviewers may read only slices and
+   `*.contract.md` files.
 3. Otherwise dispatch **one** `distiller` with `<source>` and the output path
-   `<contract>` = `docs/features/<source stem>.contract.md`. For the requirements file that
-   is `docs/features/<slug>.requirements.contract.md`. The name must be
-   `<source stem>.contract.md`, because the context-budget hook links an original to its
-   contract by filename stem.
+   `<contract>` = `docs/features/<source stem>.contract.md`, and record `CONTRACT: distilled`.
+   For the requirements file that is `docs/features/<slug>.requirements.contract.md`. The name
+   must be `<source stem>.contract.md` (copied or distilled), because the context-budget hook
+   links an original to its contract by filename stem. When `<source>` is the requirements
+   file, add this to the dispatch:
+
+   > Requirements mode. In addition to the standard sections, keep, one line each and with no
+   > row cap: every `BR-xxx` (id · rule · priority), every `VAL-xxx` (id · field · rule), every
+   > `AC-xxx` (id · one-line Then · Covers), the In Scope and Out of Scope bullets, every Error
+   > Scenario and Edge Case, and the Non-functional rows. Put them under `## Scope`,
+   > `## Business rules`, `## Validation rules`, `## Acceptance criteria`,
+   > `## Error & edge scenarios`, `## Non-functional`. For a requirements source these
+   > sections override the "What stays out" list.
+
+**One guard rule for every later stage.** Wherever a later stage passes *the contract path*,
+omit it when `CONTRACT: none`. The contract's `UNCONFIRMED` items and distiller top-up apply
+only when `CONTRACT: distilled`; otherwise write n/a.
 
 After this stage **only the `distiller` and the Stage-1 `planner` may read the original.**
-Everyone else reads the contract. When a contract exists, Global Constraints must record:
+Everyone else reads the contract. Global Constraints must record (`distilled` when
+`CONTRACT: distilled`, `copied` when `CONTRACT: copied`; no block when `CONTRACT: none`):
 
 ```
 Source of truth: <contract>
-  (distilled from <source> — do not read the original)
+  (distilled | copied from <source> — do not read the original)
 ```
 
-If an agent returns `NEEDS_CONTEXT` for a missing fact, re-dispatch the `distiller` in
-top-up mode to add it to the contract. Never hand out the original.
+When `CONTRACT: distilled` and an agent returns `NEEDS_CONTEXT` for a missing fact,
+re-dispatch the `distiller` in top-up mode to add it to the contract; otherwise handle it as
+that stage's `NEEDS_CONTEXT` rule says. Never hand out the original.
 
 Surface the contract's `UNCONFIRMED` count to the client with the Stage 2.5 approval —
 not as its own turn.
@@ -187,9 +236,17 @@ not as its own turn.
 
 Dispatch `planner` with: client request verbatim, `tier: full`, TDD/UNIT_TESTS flags, repo root,
 the **contract path** (omit it when the ledger says `CONTRACT: none`), and, only when the
-ledger says `REQUIREMENTS: none`, paths to any files the client referenced. When
-requirements were approved, the planner gets the requirements file or its contract only: the
-approved requirements are the source of truth. It works through
+ledger says `REQUIREMENTS: none`, paths to any files the client referenced. When the ledger
+has `REQUIREMENTS: <path> (approved…)` or `(existing, unrevised)`:
+
+- Also pass `<source>`, the approved requirements file, labelled explicitly as the original
+  the planner may read (Feature mode). State that the approved requirements are the source
+  of truth. The planner gets no raw client files.
+- Add to the dispatch: "Keep the overview's `FR-NN` traceability rows, but each FR row cites
+  the `BR-xxx` / `AC-xxx` IDs it covers, and every Must Have `BR-xxx` appears in at least one
+  FR row."
+
+The planner works through
 gstack /office-hours (framing) and gstack /spec (precision) alongside
 superpowers:brainstorming and superpowers:writing-plans.
 
@@ -221,8 +278,8 @@ wc -c docs/plans/<slug>/*.md docs/plans/<slug>/.review/*.md <contract>
 
 If the ledger says `CONTRACT: none`, leave `<contract>` out of the `wc -c` line and do NOT run
 the plan lint below. Record `LINT_SKIPPED: no source document` in the ledger. The completeness
-check still runs. When a contract exists, run the lint as written; passing `<source>` as the
-third argument is fine even when it equals `<contract>`.
+check still runs. When a contract exists (`distilled` or `copied`), run the lint as written,
+with `<source>` as the third argument.
 
 **Plan lint — run this BEFORE the completeness check and before any reviewer.** It catches the
 defect classes review keeps missing (fields declared but never written, upserts with no
@@ -272,6 +329,8 @@ The `wc -c` is your one authorised size check. **These are upper bounds that cat
 output — they are NOT targets, and a plan is never sent back for being too detailed.** Judge by
 character count without opening anything: task file > 12,000 - overview > 20,000 - slice >
 40,000 - contract > 9,000 -> return those paths to `planner` (or `distiller`) in targeted mode.
+The contract cap applies only when `CONTRACT: distilled`; a copied contract is exempt — it is
+the client-approved text, never shrink it.
 
 The opposite signal matters more: a task file **under 1,200 characters is probably thin** —
 check it against the completeness output above rather than waving it through.
@@ -317,7 +376,8 @@ list. Only `TASTE:` findings reach the client during the loops.
 ## Stage 2.5 — Client plan approval (HARD GATE)
 
 Present in plain language, in ONE turn: short summary (what gets built, in what order,
-key decisions), the `00-overview.md` path, the contract's `UNCONFIRMED` items, any
+key decisions), the `00-overview.md` path, the contract's `UNCONFIRMED` items (n/a unless
+`CONTRACT: distilled`), any
 requirements Open Questions still Open (from Stage R's return; write "none reported" when
 Stage R returned none), and an
 `AskUserQuestion`: **Approve and build** | **Request changes**.
@@ -495,7 +555,8 @@ Update after every stage. Keep it in the ledger, not in prose to the client.
 
 ```
 TOKEN LEDGER
-  requirements: <path> (approved, rounds: N) | none
+  requirements: <path> (approved, revisions: N) | <path> (existing, unrevised) | none
+  contract: distilled | copied | none
   requirements_dispatches: N   requirements_revisions: N / 4
   qa_slot: DONE (<outputs>) | PLACEHOLDER   qa_input_rounds: N / 2
   build_mode: <run to completion | checkpoint | per-task>

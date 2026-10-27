@@ -25,13 +25,13 @@ Stage R depends on them.
 |---|---|
 | `mode` | `draft` or `revision` |
 | `request` | the client's request, verbatim |
-| `input_files` | paths of any files the client referenced, or `none` |
+| `input_files` | paths of any files the client referenced, or `none` (passed in revision mode too) |
 | `template` | path to `templates/requirements-template.md` in the plugin |
 | `output` | `docs/features/<slug>.requirements.md` |
 | `repo_root` | repository root |
-| `answers` | answers to earlier `NEEDS_CONTEXT` questions (draft mode, optional) |
+| `answers` | answers to earlier `NEEDS_CONTEXT` questions, cumulative (both modes) |
 | `feedback` | the client's change requests, verbatim (revision mode only) |
-| `question_round` | 0, 1 or 2. At 2 you must not return `NEEDS_CONTEXT` |
+| `question_round` | 0, 1 or 2 — starts at 0 for each draft and for each revision round; at 2 you must not return `NEEDS_CONTEXT` |
 
 ## Major questions only
 
