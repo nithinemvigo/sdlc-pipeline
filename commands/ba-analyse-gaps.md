@@ -70,6 +70,8 @@ Handle the report:
 - `INCOMPLETE` or `VALIDATOR: FAILED`: do not claim success. Re-invoke it with the specific problem, or tell the user what was not processed.
 - `NEEDS_DECISION`: ask the user each listed question with AskUserQuestion (show the old gap and the new finding), then re-invoke the agent with the answers. Never guess a match.
 
+Give every re-invocation (here or in Step 5) a new draft file name (`<temp-dir>/gaps.draft-2.json`, `draft-3.json`, …) instead of rewriting the same path; from then on "the draft path" means the newest draft.
+
 ## Step 5 — Independent validation
 
 Do not rely on the agent's word. Run:

@@ -72,6 +72,8 @@ Invoke `sdlc-pipeline:story-generation-agent` with: the plugin root, the artifac
 - `NEEDS_DECISION`: ask, then re-invoke.
 - `INCOMPLETE` or failed validator: re-invoke with the specific problem.
 
+Give every re-invocation (here or in Step 7) a new draft file name (`<temp>/draft-2.json`, `draft-3.json`, …) instead of rewriting the same path; from then on `<temp>/draft.json` in the steps below means the newest draft.
+
 ## Step 7 — Independent validation
 
 ```text

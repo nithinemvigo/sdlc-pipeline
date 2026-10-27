@@ -10,6 +10,7 @@ Built on top of **superpowers**, **gstack**, and **claude-mem** — all three ar
 |---|---|---|
 | Commands | 11 | `/pipeline` (features and bugs), `/pipeline-parallel` (parallel task waves), `/pipeline-all` (requirements-first, features only), and the BA requirements analysis: `/ba-run` (all phases) plus `/ba-start-analysis`, `/ba-analyse-gaps`, `/ba-triage-gaps`, `/ba-generate-stories`, `/ba-enrich-stories`, `/ba-sync-stories`, `/ba-generate-report` |
 | Agents | 19 | Specialist sub-agents: requirements-writer, BA analysts (requirement-analyst, gap-analysis-agent, story-generation-agent), distiller, planner, investigator, implementer, reviewers (code, security, eng, design, CEO), perf-tester, unit-tester, qa-tester, adr-writer, doc-writer, ship-pr |
+| Skills | 9 | BA analysis skills (requirement decomposition, gap identification/prioritisation/triage, story generation/enrichment, acceptance-criteria design, source discovery, quality validation) |
 | Hooks | 2 | Token tracking and per-run token reports |
 
 The orchestrator never writes production code itself. It classifies your request, dispatches specialist agents, enforces quality gates, and only interrupts you for genuine decisions.
@@ -206,4 +207,4 @@ MIT — free to use, modify, and distribute. See [`LICENSE`](LICENSE).
 
 ## Credits
 
-The BA requirements analysis (`/ba-*` commands, the three BA agents, their skills, rules, schemas and scripts) is by the QA/BA team ([akhilvn-crypto/BA-Pipeline](https://github.com/akhilvn-crypto/BA-Pipeline), MIT), adapted here to run inside `/pipeline-all` — see [`licenses/ba-requirements-LICENSE`](licenses/ba-requirements-LICENSE).
+The BA requirements analysis (`/ba-*` commands, the three BA agents, their skills, rules, schemas and scripts) is by the QA/BA team ([akhilvn-crypto/BA-Pipeline](https://github.com/akhilvn-crypto/BA-Pipeline), MIT), copied from v0.5.1 and adapted here to run inside `/pipeline-all` — see [`licenses/ba-requirements-LICENSE`](licenses/ba-requirements-LICENSE).

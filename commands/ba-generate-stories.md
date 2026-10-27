@@ -82,6 +82,8 @@ Invoke the `sdlc-pipeline:story-generation-agent` agent. Its prompt must include
 
 If it reports `INCOMPLETE` or a failed validator, re-invoke it with the specific problem or tell the user what is missing. If it reports `NEEDS_DECISION` or `NEW_STORY_PROPOSALS`, put each question to the user with AskUserQuestion, then re-invoke with the answers.
 
+Give every re-invocation (here or in Step 6) a new draft file name (`<temp>/draft-2.json`, `draft-3.json`, …) instead of rewriting the same path; from then on `<temp>/draft.json` in the steps below means the newest draft.
+
 ## Step 6 — Independent validation
 
 Do not rely on the agent's word:

@@ -63,6 +63,8 @@ Invoke the `sdlc-pipeline:requirement-analyst` agent. Its prompt must include:
 
 If the agent reports `INCOMPLETE`, a `PARTIAL`, `EMPTY` or `UNREADABLE` source, or a failed validator, do not claim full completion. Either have it correct the problem (re-invoke with the specific issue) or tell the user what was not processed and ask how to proceed.
 
+Give every re-invocation (here or in Step 6) a new draft file name (`<temp-dir>/atomic_requirements.draft-2.json`, `draft-3.json`, …) instead of rewriting the same path; from then on "the draft path" means the newest draft.
+
 ## Step 6 — Independent validation
 
 Do not rely on the agent's word. Run the validator yourself on the draft:

@@ -21,17 +21,18 @@ Use whichever of `python`, `python3`, `py` works. If none does, tell the user Py
 
 When the arguments include `--requirements <path>` and `--artifact-root <dir>` (as `/sdlc-pipeline:pipeline-all` passes them), run in pipeline mode:
 
-- First resolve `--requirements` to an absolute path against the session working directory, and use that absolute path everywhere (`--sources`, `--target`, the agent prompts).
+- First resolve `--requirements` to an absolute path against the session working directory, and use that absolute path everywhere (`--sources`, `--target`, the agent prompts). Resolve `--artifact-root` to an absolute path the same way, and use that absolute artifact root everywhere (every `--project-root`, every path given to an agent).
 - Every script call in this command and in the phase commands and skills it follows — including shorthand mentions such as `pipeline-state.py start --operation …` or `gap-register-store.py summary` — gets `--project-root <artifact root>`. Never rely on the script default. (`validate-atomic-requirements.py` and `validate-gap-register.py` take no `--project-root`; give them their file paths as shown, with `<project root>` meaning the artifact root.)
 - Step 0: `COMPLETED` with `artifacts_still_valid` → print "BA analysis already complete" with the artifact root and report path, and return `COMPLETED` to the caller without asking. `INCOMPLETE`, `CORRUPT`, `INCOMPATIBLE` and `NO_STATE` are handled as below.
 - Step 1 is skipped: the source is `--requirements`, already confirmed by the client. Create the run with `begin` as Step 1 describes.
 - Skip every "outside the project root" confirmation for that file, both as the source and as the story target.
 - Phase 3 target document: the `--requirements` file; do not ask which document.
+- This plugin's context-budget hook refuses a second full Read of the same file in one session. When you must re-read a file that may have changed (a re-invoked agent's draft) or whose content is no longer in context (after a resume or a long triage), Read it with an explicit `offset`/`limit` window. When re-invoking an agent with answers or fixes, give it a new draft file name (`draft-2.json`, `draft-3.json`, …) instead of rewriting the same path.
 - In pipeline mode, every instruction to run this command again (the Step 5a and 5b resume hints and Step 9's "To continue" line) says instead: run `/sdlc-pipeline:pipeline-all <requirements path>` again (or `/sdlc-pipeline:ba-run` with the same `--requirements` and `--artifact-root`).
 - End: print the Step 8 or Step 9 summary, then map the end to a status:
   - Step 8 `COMPLETED` or `COMPLETED WITH FOLLOW-UP` (or the Step 0 "already complete" return) → `BA_STATUS: COMPLETED`.
   - A stop / exit during triage (5a or 5c) → `BA_STATUS: PAUSED`.
-  - **Exit and resume later** at the story-generation gate → `BA_STATUS: BLOCKED`.
+  - **Exit and resume later** at the story-generation gate → `BA_STATUS: PAUSED`.
   - Any other Step 9 end — `STOPPED`, a phase, validation, report or final-validation failure, a user cancel, or Step 0 **Cancel** → `BA_STATUS: BLOCKED`.
 
   The last line of your output is always exactly one of `BA_STATUS: COMPLETED`, `BA_STATUS: PAUSED` or `BA_STATUS: BLOCKED`.

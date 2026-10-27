@@ -135,7 +135,10 @@ A request that is not clearly a bug gets no question.
      continue exactly as the part-path bullet above with that path as the request: it sets
      `<slug>`, `REMAINING_PARTS` and `part K of P`, and runs the approved-earlier skip and
      the earlier-part check; the summary, counts and Open Questions are not available |
-     **Regenerate** (delete the listed files in one Bash call, then dispatch the writer).
+     **Regenerate** — deletes the old requirements and its BA analysis (in one Bash call,
+     delete the listed files and the matching Stage Q artifact root —
+     `rm -rf docs/features/ba/<slug>/` for the single file, `rm -rf docs/features/<slug>/ba/`
+     for a split folder — then dispatch the writer).
 2. **Dispatch `requirements-writer`** with:
    - `mode: draft`, `question_round: 0`
    - `request`: the client request, verbatim
@@ -218,13 +221,38 @@ return, and the client opens the file themselves. Never start Stage Q without an
 `<artifact root>` = `<directory of the REQUIREMENTS file>/ba/<its stem without .requirements>/`
 (e.g. `docs/features/emv/ba/02-campaigns/`).
 
-- `REQUIREMENTS: none` → say `No requirements file — skipping BA analysis.`, record `ba: skipped`, continue to Stage 0.5.
-- Otherwise invoke the skill `sdlc-pipeline:ba-run` with arguments
-  `--requirements <REQUIREMENTS path> --artifact-root <artifact root>`. It runs atomic requirements, gap analysis, gap triage with the client (one gap at a time; every Critical and High gap must be resolved) and development stories appended to the requirements file, then returns a last line `BA_STATUS: …`.
-- `BA_STATUS: PAUSED` → record `ba: <artifact root> (paused)` and end the run with: "Your answers are saved. Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue — the BA analysis resumes where it stopped."
-- `BA_STATUS: BLOCKED`, or no `BA_STATUS` line → record `ba: <artifact root> (blocked)` and end the run with: "The BA analysis stopped (reason above). Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue from where it stopped."
+`<absolute artifact root>` = `<repo root>/<artifact root>`; the skill and the state check
+below always get the absolute form.
+
+- `REQUIREMENTS: none` → say `No requirements file — skipping BA analysis.`, record
+  `ba: skipped`, continue to Stage 0.5.
+- **Already complete?** If `<PLUGIN_ROOT>` (recorded at Stage -1) is not `unset`, run one Bash
+  call: `python <PLUGIN_ROOT>/scripts/pipeline-state.py inspect --project-root <absolute artifact root>`.
+  If its JSON has `state_status` `COMPLETED` and `artifacts_still_valid` true → say
+  `BA analysis already complete — skipping.`, record `ba: <artifact root> (completed)`, run
+  the `.gitignore` call from the `COMPLETED` bullet below, and continue to Stage 0.5 without
+  its question. Any other result, a failed call, or `unset` → invoke the skill.
+- Invoke the skill `sdlc-pipeline:ba-run` with arguments
+  `--requirements <REQUIREMENTS path> --artifact-root <absolute artifact root>`. It runs
+  atomic requirements, gap analysis, gap triage with the client (one gap at a time; every
+  Critical and High gap must be resolved) and development stories appended to the
+  requirements file, then returns a last line `BA_STATUS: …`.
+- `BA_STATUS: PAUSED` → record `ba: <artifact root> (paused)` and end the run with: "Your
+  answers are saved. Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue — the
+  BA analysis resumes where it stopped."
+- `BA_STATUS: BLOCKED`, or no `BA_STATUS` line → record `ba: <artifact root> (blocked)` and
+  end the run with: "The BA analysis stopped (reason above). Run
+  `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue from where it stopped."
 - Stage R and Stage Q stops end with their own line only — never the next-part line.
-- `BA_STATUS: COMPLETED` → record `ba: <artifact root> (completed)`. If `ba-run` reported that the BA analysis was already complete (a resumed run), do not ask — continue to Stage 0.5. Otherwise ask with `AskUserQuestion`: **Stop and resume in a fresh session (Recommended — lower cost)** | **Continue now**. The BA instructions stay in this session's context for every later turn. **Stop** ends the run with: "Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` in a new session — requirements and BA analysis are kept and skipped."
+- `BA_STATUS: COMPLETED` → record `ba: <artifact root> (completed)`, then keep machine-specific
+  files out of git with one Bash call:
+  `[ -f <artifact root>/.gitignore ] || printf '.ba-requirements/\nstories/backups/\n' > <artifact root>/.gitignore`.
+  If `ba-run` reported that the BA analysis was already complete (a resumed run), do not
+  ask — continue to Stage 0.5. Otherwise ask with `AskUserQuestion`: **Stop and resume in a
+  fresh session (Recommended — lower cost)** | **Continue now**. The BA instructions stay in
+  this session's context for every later turn. **Stop** ends the run with: "Run
+  `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` in a new session — requirements and BA
+  analysis are kept and skipped."
 
 ## Stage 0.5 — Testing preferences (after Stage R and Stage Q)
 
@@ -507,8 +535,11 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
    clean test baseline first. On every `/pipeline-all` run with a requirements file
    (written, approved, or approved earlier), commit them as the branch's first commit: `git add` the current requirements
    file, for a part its sibling `<dir>/[0-9][0-9]-*.requirements.md` files, and the Stage Q
-   `<artifact root>` when it exists (`if [ -d <artifact root> ]; then git add <artifact root>; fi`); commit only if
-   something is staged
+   `<artifact root>` when it exists, with its `.gitignore` but without its checkpoint and
+   story backups (the checkpoint stores absolute local paths and the backups duplicate the
+   requirements file):
+   `if [ -d <artifact root> ]; then git add <artifact root> ':!<artifact root>/.ba-requirements' ':!<artifact root>/stories/backups'; fi`.
+   Commit only if something is staged
    (`git diff --cached --quiet || git commit -m "docs: requirements for <slug>"`).
    After a split this includes all parts, so later parts reach the base branch with this PR.
 2. Record the base commit (HEAD after the requirements commit).

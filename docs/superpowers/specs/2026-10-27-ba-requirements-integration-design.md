@@ -1,7 +1,7 @@
 # BA requirements plugin → `/pipeline-all` Stage Q — Design
 
 - **Date:** 2026-10-27
-- **Status:** Draft — awaiting review
+- **Status:** Approved — implemented on feature/pipeline-all
 - **Source:** `akhilvn-crypto/BA-Pipeline`, folder `ba-requirements-plugin` (v0.5.1, MIT)
 - **Branch:** `feature/pipeline-all` (unreleased 3.2.0)
 
@@ -63,9 +63,11 @@ given it runs in **pipeline mode**:
 - **"Outside the project root" confirmations** (source and story target) are skipped for that
   path: the client already approved it in Stage R.
 - **Story target document:** `--requirements` itself (no target question).
-- **End:** completed → final summary, then return to the caller. Paused at triage or blocked
-  at the Critical/High gate → the "stopped/paused" summary, then return with status
-  `PAUSED` or `BLOCKED` so `/pipeline-all` stops cleanly.
+- **End:** completed → final summary, then return to the caller. Paused at triage, or a
+  deliberate **Exit and resume later** at the Critical/High story gate → the "stopped/paused"
+  summary, then return with status `PAUSED`. A blocked gate with no exit choice, a phase or
+  validation failure, or a user cancel → return with status `BLOCKED`. Either way
+  `/pipeline-all` stops cleanly.
 
 Without the arguments, `ba-run` behaves exactly as upstream (asks for the source, project root
 = current directory).
@@ -96,15 +98,18 @@ checkpoint (`<artifact root>/.ba-requirements/pipeline-state.json`) — runs nev
 - BA JSON artifacts are allow-listed (`*.json`); HTML is never read by agents.
 - Stage R deletes stale contracts before Stage Q, and Stage 0.8 (which creates the contract)
   runs after Stage Q, so Rule 2 never shadows the requirements file while BA reads it.
+- The hook refuses a second full `Read` of the same file, so pipeline mode re-reads a changed
+  or evicted file with an explicit `offset`/`limit` window, and each agent re-invocation
+  writes a new draft file (`draft-2.json`, `draft-3.json`, …).
 
 ## 7. `/pipeline-all` changes
 
 | Stage | Change |
 |---|---|
-| Q | Replace the `qa-placeholder` dispatch: invoke the skill `sdlc-pipeline:ba-run` with `--requirements <REQUIREMENTS path> --artifact-root <artifact root>`. Skip Stage Q (one line) when `REQUIREMENTS: none`. On `PAUSED`/`BLOCKED`: stop the run with "Your answers are saved. Run `/sdlc-pipeline:pipeline-all <requirements path>` to continue — the BA analysis resumes where it stopped." On completion: record `BA: <artifact root> (completed)`, then ask **Continue now** \| **Stop and resume in a fresh session (Recommended — lower cost)**, because the BA files stay in this session's context for every later turn. |
+| Q | Replace the `qa-placeholder` dispatch: invoke the skill `sdlc-pipeline:ba-run` with `--requirements <REQUIREMENTS path> --artifact-root <repo root>/<artifact root>` (absolute; `ba-run` also resolves both to absolute paths). Skip Stage Q (one line) when `REQUIREMENTS: none`, and skip the skill when `pipeline-state.py inspect` on the artifact root already reports `COMPLETED` with `artifacts_still_valid`. After a completed run, write `<artifact root>/.gitignore` (`.ba-requirements/`, `stories/backups/`) if absent. On `PAUSED`/`BLOCKED`: stop the run with "Your answers are saved. Run `/sdlc-pipeline:pipeline-all <requirements path>` to continue — the BA analysis resumes where it stopped." On completion: record `BA: <artifact root> (completed)`, then ask **Continue now** \| **Stop and resume in a fresh session (Recommended — lower cost)**, because the BA files stay in this session's context for every later turn. |
 | 0.8 | Requirements-mode distiller dispatch also keeps every development story: `US-xxx` · summary · one line per acceptance criterion (stories in the file carry no `REQ-` IDs), under `## Development stories`. The size check runs on the file **with** stories. |
 | 1 | Planner dispatch: FR rows cite the `US-xxx` stories (and `BR-`/`AC-` IDs) they implement; every story appears in at least one FR row. |
-| 3 | The requirements commit also adds `<artifact root>` (gap register, decisions, stories state, report). |
+| 3 | The requirements commit also adds `<artifact root>` (gap register, decisions, stories state, report, `.gitignore`), excluding `.ba-requirements/` (checkpoint with absolute local paths) and `stories/backups/` (copies of the requirements file). |
 | Ledger | `qa_slot` → `ba: <artifact root> (completed \| paused \| blocked \| skipped)`. |
 | Hard rules | Never start Stage 0.5 while BA is `PAUSED` or `BLOCKED`. |
 
