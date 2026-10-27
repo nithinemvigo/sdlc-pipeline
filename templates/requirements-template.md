@@ -6,6 +6,9 @@ sdlc-pipeline requirements template v1.
 - Never delete or renumber sections. If an _Optional_ section does not apply, keep its
   heading and write "Not applicable." (Other agents cite sections by number.)
 - IDs (BR-, VAL-, AC-, Q-) start at 001 and are never reused.
+- Split features: `00-shared.requirements.md` uses IDs 001–099; part N uses N01–N99 (part 1:
+  BR-101, part 2: BR-201). A part's sections owned by the shared file say
+  "See `00-shared.requirements.md` §N." plus anything specific to the part.
 - Technical detail (table names, endpoints, regexes, services) is allowed ONLY under a
   "### Technical notes" heading, and only in sections 10, 11, 18 and 21. Everything else
   stays business-level.

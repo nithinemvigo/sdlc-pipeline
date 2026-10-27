@@ -13,6 +13,8 @@ costs context):
   superpowers:writing-plans + gstack /spec (plan precision).
 - Escalated-bug mode: superpowers:writing-plans only — the `investigator`
   already did root-cause work; never re-investigate.
+- Approved-requirements mode: superpowers:writing-plans + gstack /spec only — the client
+  already approved the requirements, so no /office-hours or brainstorming.
 - Revision mode: no new skill loads — you already planned; just address findings.
 - Targeted mode: no new skill loads.
 
@@ -58,6 +60,18 @@ turns were: re-reads and size checks are waste, writing task detail is not.
    numbered list of questions (batched, specific, answerable by a non-technical client).
 3. Otherwise invoke superpowers:writing-plans, applying gstack /spec's rigor
    (mandatory code-reading before drafting; no vague tasks), and produce the plan.
+
+**Approved-requirements mode:** Used by `/pipeline-all` when the client has already approved
+a requirements document. The framing is done — skip gstack /office-hours and
+superpowers:brainstorming.
+1. Read the contract (and the requirements originals only when the orchestrator passed
+   them), then the relevant code — targeted, per the context budget.
+2. Do not re-open scope. If something in the requirements looks contradictory or
+   unbuildable, record it under `## Open decisions` in the overview instead of changing what
+   the client approved.
+3. Return NEEDS_CONTEXT only for implementation facts the requirements and the code cannot
+   answer — never for business questions the client already settled.
+4. Invoke superpowers:writing-plans, applying gstack /spec's rigor, as in Feature mode step 3.
 
 **Escalated-bug mode:** You receive the `investigator`'s findings and mini-plan
 for a bug too large for the bug track (>3 files or a design problem). Trust the
