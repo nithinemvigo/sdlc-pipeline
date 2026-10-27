@@ -96,12 +96,14 @@ A request that is not clearly a bug gets no question.
      file; `<stem>` is its file name without `.md`. Set `<slug>` =
      `<feature folder name>-<part file stem without .requirements>`, so the plans dir and
      branch are unique per part (`docs/features/emv-email/02-campaigns.requirements.md` →
-     `emv-email-02-campaigns`). One Bash call:
+     `emv-email-02-campaigns`). A single file directly under `docs/features/`
+     (`docs/features/<name>.requirements.md`) is not a part: `<slug>` = `<name>`. One Bash call:
      `ls <path> <dir>/00-shared.requirements.md 2>/dev/null; ls <dir>/[0-9][0-9]-*.requirements.md 2>/dev/null; rm -f <dir>/<stem>.contract.md`.
      Record `<path>`, and `REQUIREMENTS_SHARED: <dir>/00-shared.requirements.md` when it
      exists. Record `REMAINING_PARTS` = the listed parts with a higher NN than this part, and
      the ledger entry as `part K of P` (K = this part's place among the listed parts, P =
-     how many are listed). Go to the step-4 question showing only the path — you do not read
+     how many are listed — in both, ignore `00-shared.requirements.md`, which the glob also
+     matches). Go to the step-4 question showing only the path — you do not read
      the file; the summary, counts and Open Questions are not available.
    - **Otherwise** derive `<slug>` from the request (kebab-case, at most 5 words). The
      single-file path is `docs/features/<slug>.requirements.md`; the split folder is
@@ -162,11 +164,12 @@ A request that is not clearly a bug gets no question.
    request.` on the same turn as the Stage Q dispatch, record `REQUIREMENTS: none`, and go
    to Stage Q. No gate. **`BLOCKED`** → the same, but say
    `Requirements agent blocked: <reason> — continuing with the raw request.`
-   - **Exception:** if the client chose **Use the existing file** and a later `revision`
-     dispatch returns `PLACEHOLDER` or `BLOCKED`, keep the file: record
-     `REQUIREMENTS: <path> (existing, unrevised)`, tell the client in one line that their
-     changes could not be applied because the requirements agent is not implemented yet, and
-     continue to Stage Q.
+   - **Exception:** if the client chose **Use the existing file**, or the run started from a
+     part path, and a later `revision` dispatch returns `PLACEHOLDER` or `BLOCKED`, keep the
+     file: record `REQUIREMENTS: <path> (existing, unrevised)`, tell the client in one line
+     that their changes could not be applied (for `BLOCKED`, give its `<reason>`; for
+     `PLACEHOLDER`, say the requirements agent is not implemented yet), and continue to
+     Stage Q.
 6. Ledger: `REQUIREMENTS: <path> (approved, revisions: R)`,
    `REQUIREMENTS: <path> (existing, unrevised)` or `REQUIREMENTS: none`. After a split,
    `<path>` is part 1, `<slug>` becomes part 1's part slug for the rest of the run (plans
