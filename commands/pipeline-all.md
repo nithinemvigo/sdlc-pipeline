@@ -254,6 +254,17 @@ below always get the absolute form.
   `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` in a new session — requirements and BA
   analysis are kept and skipped."
 
+### Story export (used by Stage 1 and Stage 5.85)
+
+Run it once Stage Q ends with `ba: <artifact root> (completed)` (a resumed or already-complete
+run included) and `<PLUGIN_ROOT>` is not `unset`. One Bash call writes the stories as JSON:
+`python <PLUGIN_ROOT>/scripts/sync-development-stories.py export --project-root <absolute artifact root> --target <absolute REQUIREMENTS path> --draft-out <absolute artifact root>/.ba-requirements/stories-export.json`.
+Record `STORIES: <absolute artifact root>/.ba-requirements/stories-export.json`; otherwise
+record `STORIES: none`. A non-zero exit → show the output and end the run with: "The BA
+analysis stopped (reason above). Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to
+continue from where it stopped." Agents read the stories from this JSON only, never from
+`detailed_stories.md`.
+
 ## Stage 0.5 — Testing preferences (after Stage R and Stage Q)
 
 `TYPE: feature` is fixed for this command. Do not ask it.
@@ -313,8 +324,9 @@ The ledger value `CONTRACT: distilled | copied | none` records which case applie
    > `## Error & edge scenarios`, `## Non-functional`. For a requirements source these
    > sections override the "What stays out" list.
    > Also keep every development story from the `# Development Stories` section, one line
-   > each: `US-xxx` · summary · one line per acceptance criterion, under
-   > `## Development stories`.
+   > each: `US-xxx` · summary · the story's one acceptance statement, under
+   > `## Development stories`. (The detailed criteria are in the stories export, not the
+   > requirements file.)
 
 **One guard rule for every later stage.** Wherever a later stage passes *the contract path*,
 omit it when `CONTRACT: none`. The contract's `UNCONFIRMED` items and distiller top-up apply
@@ -353,6 +365,12 @@ has `REQUIREMENTS: <path> (approved…)` or `(existing, unrevised)`:
   the `BR-xxx` / `AC-xxx` IDs it covers and the `US-xxx` stories it implements, every Must
   Have `BR-xxx` appears in at least one FR row, and every `US-xxx` story appears in at least
   one FR row."
+- When the ledger says `STORIES: <path>`, first run the story export again (fresh — see
+  "Story export" in Stage Q), then pass its path to the planner as "the development stories
+  (JSON, read it)" and add to the dispatch: "Each task file's `## Acceptance criteria` lists
+  the detailed criteria the task implements as `US-003.2 — <criterion text>` (story ID, then
+  the criterion's number in that story's `detailed.acceptance_criteria` list). Every detailed
+  criterion of every story appears in at least one task."
 
 Otherwise (`REQUIREMENTS: none`) the planner works through
 gstack /office-hours (framing) and gstack /spec (precision) alongside
@@ -685,6 +703,7 @@ TOKEN LEDGER
   contract: distilled | copied | none
   requirements_dispatches: N   requirements_revisions: N / 4
   ba: <artifact root> (completed | paused | blocked | skipped)
+  STORIES: <path> | none
   build_mode: <run to completion | checkpoint | per-task>
   planner_dispatches: N / 4
   reviewer_dispatches: N   implementer_dispatches: N
