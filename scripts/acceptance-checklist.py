@@ -35,9 +35,11 @@ AC_HEADING = re.compile(r"^###\s+(AC-\d+)\s*(?:[—–-]+\s*(.*?))?\s*$")
 AC_LABEL = re.compile(r"^\*\*(Covers|Given|When|Then):?\*\*:?\s*(.*)$")
 ANY_HEADING = re.compile(r"^#{1,3}\s")
 TASK_FILE = re.compile(r"^task-(\d+)-.*\.md$")
-TASKS_HEADING = re.compile(r"^##\s+Acceptance criteria\s*$", re.IGNORECASE)
+TASKS_HEADING = re.compile(r"^##\s+Acceptance criteria\b.*$", re.IGNORECASE)
 LEVEL2_HEADING = re.compile(r"^##\s")
-BULLET = re.compile(r"^\s*[-*]\s+(.*\S)\s*$")
+BULLET = re.compile(r"^[-*]\s+(.*\S)\s*$")
+CHECKBOX = re.compile(r"^\[[ xX]\]\s*")
+COVERS_SPLIT = re.compile(r"[,\s]+")
 
 
 class Fail(Exception):
@@ -76,6 +78,10 @@ def atomic_write(path, text):
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(handle.name, path)
+            try:
+                os.chmod(path, 0o644)  # the temporary file is created private (0600)
+            except OSError:
+                pass
         except BaseException:
             try:
                 os.unlink(handle.name)
@@ -96,54 +102,86 @@ def story_items(export_path):
     stories = data.get("stories") if isinstance(data, dict) else None
     if not isinstance(stories, list):
         raise Fail(f"{export_path} is not a stories export (expected an object with a `stories` list).")
-    missing = [str(s.get("story_id")) for s in stories if isinstance(s, dict) and not isinstance(s.get("detailed"), dict)]
+    for position, story in enumerate(stories, 1):
+        if not isinstance(story, dict):
+            raise Fail(f"Story #{position} in {export_path} is not an object.")
+        if not isinstance(story.get("story_id"), str) or not story["story_id"].strip():
+            raise Fail(f"Story #{position} in {export_path} has no `story_id`.")
+    missing = [st["story_id"] for st in stories if not isinstance(st.get("detailed"), dict)]
     if missing:
         raise Fail("These stories have no detailed story yet: " + ", ".join(missing)
                    + ". Sync or generate the detailed stories first, then export again.")
     items = []
     for story in stories:
-        criteria = story["detailed"].get("acceptance_criteria") or []
-        number = 0
-        for text in criteria:
+        sid = story["story_id"]
+        criteria = story["detailed"].get("acceptance_criteria")
+        if not isinstance(criteria, list):
+            raise Fail(f"Story {sid}: `detailed.acceptance_criteria` is not a list.")
+        sources = story.get("source_requirement_ids") or []
+        if not isinstance(sources, list):
+            raise Fail(f"Story {sid}: `source_requirement_ids` is not a list.")
+        for number, text in enumerate(criteria, 1):
             if not isinstance(text, str) or not text.strip():
-                continue
-            number += 1
+                raise Fail(f"Story {sid}: acceptance criterion #{number} is blank or not text.")
             items.append({
-                "id": f"{story['story_id']}.{number}",
+                "id": f"{sid}.{number}",
                 "kind": "story",
-                "story_id": story["story_id"],
+                "story_id": sid,
                 "summary": story.get("summary", ""),
                 "text": text.strip(),
-                "source_requirement_ids": list(story.get("source_requirement_ids") or []),
+                "source_requirement_ids": list(sources),
             })
     return items
 
 
+def strip_comments(line, state):
+    """Remove HTML comments (also multi-line ones, tracked in `state`) from one line."""
+    out = []
+    while line:
+        if state["open"]:
+            close = line.find("-->")
+            if close < 0:
+                break
+            line, state["open"] = line[close + 3:], False
+        else:
+            opening = line.find("<!--")
+            if opening < 0:
+                out.append(line)
+                break
+            out.append(line[:opening])
+            line, state["open"] = line[opening + 4:], True
+    return "".join(out)
+
+
 def requirement_items(requirements_path):
-    items = []
+    blocks = []
     block = None
-    for line in read_text(requirements_path).splitlines():
+    comment = {"open": False}
+    for raw in read_text(requirements_path).splitlines():
+        line = strip_comments(raw, comment)
         heading = AC_HEADING.match(line)
         if heading:
             block = {"id": heading.group(1), "name": heading.group(2) or "", "fields": {}, "current": None}
-            items.append(block)
+            blocks.append(block)
             continue
         if ANY_HEADING.match(line):
             block = None
             continue
         if block is None:
             continue
-        label = AC_LABEL.match(line)
+        label = AC_LABEL.match(line.strip())
         if label:
             block["current"] = label.group(1)
-            block["fields"][block["current"]] = [label.group(2).strip()]
+            block["fields"].setdefault(block["current"], []).append(label.group(2).strip())
         elif block["current"] and line.strip():
             block["fields"][block["current"]].append(line.strip())
     result = []
-    for block in items:
-        fields = {key: " ".join(part for part in parts if part) for key, parts in block["fields"].items()}
+    for block in blocks:
+        fields = {key: " ".join(" ".join(parts).split()) for key, parts in block["fields"].items()}
         text = " ".join(f"{key} {fields[key]}" for key in ("Given", "When", "Then") if fields.get(key))
-        covers = [c.strip() for c in fields.get("Covers", "").split(",") if c.strip()]
+        if not text:
+            raise Fail(f"{block['id']} in {requirements_path} has no Given/When/Then text.")
+        covers = [c for c in COVERS_SPLIT.split(fields.get("Covers", "")) if c]
         result.append({"id": block["id"], "kind": "requirement", "name": block["name"], "text": text, "covers": covers})
     return result
 
@@ -151,7 +189,8 @@ def requirement_items(requirements_path):
 def task_items(plan_dir):
     if not os.path.isdir(plan_dir):
         raise Fail(f"{plan_dir} is not a directory.")
-    files = sorted((TASK_FILE.match(name).group(1), name) for name in os.listdir(plan_dir) if TASK_FILE.match(name))
+    files = sorted(((TASK_FILE.match(name).group(1), name) for name in os.listdir(plan_dir) if TASK_FILE.match(name)),
+                   key=lambda pair: (int(pair[0]), pair[1]))
     items = []
     for number, name in files:
         in_section = False
@@ -163,9 +202,10 @@ def task_items(plan_dir):
                 in_section = False
             elif in_section:
                 bullet = BULLET.match(line)
-                if bullet:
+                text = CHECKBOX.sub("", bullet.group(1)).strip() if bullet else ""
+                if text:
                     index += 1
-                    items.append({"id": f"T{number}.{index}", "kind": "task", "task": name, "text": bullet.group(1)})
+                    items.append({"id": f"T{number}.{index}", "kind": "task", "task": name, "text": text})
     return items
 
 
@@ -196,8 +236,9 @@ def cmd_build(args):
 def load_checklist(path):
     data = read_json(path)
     items = data.get("items") if isinstance(data, dict) else None
-    if not isinstance(items, list) or not all(isinstance(i, dict) and i.get("id") for i in items):
-        raise Fail(f"{path} is not a checklist (expected an object with an `items` list of items with an `id`).")
+    if not isinstance(items, list) or not all(isinstance(i, dict) and isinstance(i.get("id"), str) and i["id"]
+                                              for i in items):
+        raise Fail(f"{path} is not a checklist (expected an object with an `items` list of items with a text `id`).")
     return items
 
 
@@ -225,19 +266,27 @@ def validate_verdicts(items, verdicts_data):
         if status not in STATUSES:
             problems.append(f"{vid}: status {status!r} is not one of {', '.join(STATUSES)}.")
             continue
-        if status == "met":
-            evidence = verdict.get("evidence")
-            if not isinstance(evidence, list) or not evidence:
+        evidence = verdict.get("evidence")
+        if evidence is None:
+            evidence = []
+        if not isinstance(evidence, list):
+            problems.append(f"{vid}: `evidence` must be a list.")
+        else:
+            for entry in evidence:
+                kind = entry.get("type") if isinstance(entry, dict) else None
+                ref = entry.get("ref") if isinstance(entry, dict) else None
+                if not isinstance(kind, str) or not isinstance(ref, str):
+                    problems.append(f"{vid}: each evidence entry must be an object with text `type` and `ref`.")
+                elif status == "met" and kind not in EVIDENCE_TYPES:
+                    problems.append(f"{vid}: evidence type {kind!r} is not one of {', '.join(EVIDENCE_TYPES)}.")
+                elif status == "met" and not ref.strip():
+                    problems.append(f"{vid}: evidence entry has no `ref`.")
+            if status == "met" and not evidence:
                 problems.append(f"{vid}: `met` needs at least one evidence entry.")
-            else:
-                for entry in evidence:
-                    kind = entry.get("type") if isinstance(entry, dict) else None
-                    ref = entry.get("ref") if isinstance(entry, dict) else None
-                    if kind not in EVIDENCE_TYPES:
-                        problems.append(f"{vid}: evidence type {kind!r} is not one of {', '.join(EVIDENCE_TYPES)}.")
-                    elif not isinstance(ref, str) or not ref.strip():
-                        problems.append(f"{vid}: evidence entry has no `ref`.")
-        if status == "accepted_followup" and not str(verdict.get("note") or "").strip():
+        for field in ("fix_hint", "note"):
+            if verdict.get(field) is not None and not isinstance(verdict[field], str):
+                problems.append(f"{vid}: `{field}` must be text.")
+        if status == "accepted_followup" and not (verdict.get("note") if isinstance(verdict.get("note"), str) else "").strip():
             problems.append(f"{vid}: `accepted_followup` needs the client's note.")
     for item in items:
         if item["id"] not in by_id:
@@ -323,6 +372,8 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         result, code = {"build": cmd_build, "render": cmd_render}[args.command](args)
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:  # an input shape the validation missed
+        result, code = {"ok": False, "error": f"Unexpected input ({type(exc).__name__}: {exc}). Nothing was written."}, 2
     except Fail as exc:
         result, code = {"ok": False, "error": str(exc)}, 2
         if exc.problems:

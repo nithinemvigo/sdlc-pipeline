@@ -253,5 +253,141 @@ class RenderTests(Case):
         self.assertFalse(result["ok"])
 
 
+class InputValidationTests(Case):
+    """Malformed input exits 2 with a message, never a traceback."""
+
+    def assert_exit2(self, code, result):
+        self.assertEqual(code, 2, result)
+        self.assertFalse(result.get("ok"), result)
+        self.assertNotIn("Traceback", json.dumps(result))
+
+    def write_text(self, name, text):
+        path = self.path(name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def test_malformed_evidence_on_any_status_exits_2(self):
+        checklist = self.full_checklist()
+        for bad in ("oops", ["oops"], [{"type": "test"}], [{"type": 1, "ref": "x"}], [None]):
+            for status in ("met", "not_met", "cannot_verify", "accepted_followup"):
+                verdicts = self.met_verdicts(checklist)
+                verdicts["verdicts"][0] = {"id": "US-001.1", "status": status, "evidence": bad, "note": "n"}
+                code, result, _ = self.render(checklist, verdicts)
+                self.assert_exit2(code, result)
+                self.assertIn("US-001.1", "\n".join(result["problems"]))
+
+    def test_non_string_id_in_verdict_or_checklist_exits_2(self):
+        checklist = self.full_checklist()
+        verdicts = self.met_verdicts(checklist)
+        verdicts["verdicts"][0]["id"] = 7
+        code, result, _ = self.render(checklist, verdicts)
+        self.assert_exit2(code, result)
+        bad_list = self.write_json("bad-checklist.json", {"items": [{"id": 5, "text": "x"}]})
+        code, result, _ = self.render(bad_list, {"verdicts": []})
+        self.assert_exit2(code, result)
+
+    def test_verdicts_without_list_exits_2(self):
+        checklist = self.full_checklist()
+        for data in ({"nope": []}, {"verdicts": "x"}, []):
+            code, result, _ = self.render(checklist, data)
+            self.assert_exit2(code, result)
+
+    def test_checklist_without_item_list_exits_2(self):
+        for data in ({"nope": []}, {"items": "x"}, [], {"items": ["x"]}):
+            bad = self.write_json("bad.json", data)
+            code, result, _ = self.render(bad, {"verdicts": []})
+            self.assert_exit2(code, result)
+
+    def test_export_without_stories_list_exits_2(self):
+        for data in ({"nope": []}, {"stories": "x"}, []):
+            code, result, _ = self.build("--export", self.write_json("e.json", data))
+            self.assert_exit2(code, result)
+
+    def test_story_shape_errors_exit_2(self):
+        good = self.read_json(EXPORT)["stories"][0]
+
+        def story(**changes):
+            copy_ = copy.deepcopy(good)
+            copy_.update(changes)
+            return copy_
+
+        def bad_detail(value):
+            copy_ = copy.deepcopy(good)
+            copy_["detailed"]["acceptance_criteria"] = value
+            return copy_
+
+        cases = [
+            ("not-an-object", ["x"], "#1"),
+            ("no id", [{k: v for k, v in good.items() if k != "story_id"}], "story_id"),
+            ("criteria not a list", [bad_detail("nope")], "US-001"),
+            ("blank criterion", [bad_detail(["ok", "  ", "later"])], "US-001"),
+            ("non-text criterion", [bad_detail(["ok", 5])], "US-001"),
+            ("sources not a list", [story(source_requirement_ids=5)], "US-001"),
+        ]
+        for label, stories, needle in cases:
+            code, result, _ = self.build("--export", self.write_json("e.json", {"stories": stories}))
+            self.assert_exit2(code, result)
+            self.assertIn(needle, result["error"], label)
+
+    def test_requirements_repeated_labels_append(self):
+        path = self.write_text("r.md", "### AC-001 — a\n\n**Covers:** BR-001\n\n**Covers:** BR-002\n\n"
+                                       "**Given** one\n\n**Given** two\n\n**When** w\n\n**Then** t\n")
+        code, result, out = self.build("--requirements", path)
+        self.assertEqual(code, 0, result)
+        item = self.read_json(out)["items"][0]
+        self.assertEqual(item["text"], "Given one two When w Then t")
+        self.assertEqual(item["covers"], ["BR-001", "BR-002"])
+
+    def test_requirements_html_comments_are_skipped(self):
+        path = self.write_text("r.md", "<!-- ### AC-009 — hidden\n**Given** hidden\n-->\n"
+                                       "### AC-001 — a\n\n<!-- single line -->\n**Given** g <!-- inline --> more\n"
+                                       "<!-- multi\nline\ncomment -->\n**When** w\n\n**Then** t\n")
+        code, result, out = self.build("--requirements", path)
+        self.assertEqual(code, 0, result)
+        items = self.read_json(out)["items"]
+        self.assertEqual([i["id"] for i in items], ["AC-001"])
+        self.assertEqual(items[0]["text"], "Given g more When w Then t")
+
+    def test_requirement_without_gwt_text_exits_2_naming_ac(self):
+        path = self.write_text("r.md", "### AC-001 — ok\n\n**Given** g\n\n### AC-002 — empty\n\n"
+                                       "**Covers:** BR-001\n\n**Given**\n\n**When**\n\n**Then**\n")
+        code, result, out = self.build("--requirements", path)
+        self.assert_exit2(code, result)
+        self.assertIn("AC-002", result["error"])
+        self.assertFalse(os.path.exists(out))
+
+    def test_story_numbers_follow_list_position(self):
+        # a blank criterion is an error, so numbering can never silently skip a position
+        export = {"stories": [{"story_id": "US-009", "summary": "s", "source_requirement_ids": [],
+                               "detailed": {"acceptance_criteria": ["a", "b", "c"]}}]}
+        code, result, out = self.build("--export", self.write_json("e.json", export))
+        self.assertEqual(code, 0, result)
+        self.assertEqual([i["id"] for i in self.read_json(out)["items"]], ["US-009.1", "US-009.2", "US-009.3"])
+
+    def test_task_parsing_rules(self):
+        plan = self.path("plan")
+        os.makedirs(plan)
+        self.write_text(os.path.join("plan", "task-10-last.md"), "## ACCEPTANCE CRITERIA (draft)\n- ten one\n")
+        self.write_text(os.path.join("plan", "task-02-mid.md"),
+                        "## Acceptance criteria\n- [ ] open box\n- [x] ticked box\n  - nested detail\n"
+                        "\t- tab nested\n* star bullet\n\n## Tests\n- not a criterion\n")
+        self.write_text(os.path.join("plan", "task-01-first.md"), "## Acceptance criteria\n- one\n")
+        self.write_text(os.path.join("plan", "task-03-none.md"), "## Acceptance criteria extra\n\n")
+        code, result, out = self.build("--tasks", plan)
+        self.assertEqual(code, 0, result)
+        items = self.read_json(out)["items"]
+        self.assertEqual([(i["id"], i["text"]) for i in items], [
+            ("T01.1", "one"),
+            ("T02.1", "open box"), ("T02.2", "ticked box"), ("T02.3", "star bullet"),
+            ("T10.1", "ten one"),
+        ])
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    def test_written_files_are_world_readable(self):
+        out = self.full_checklist()
+        self.assertEqual(os.stat(out).st_mode & 0o777, 0o644)
+
+
 if __name__ == "__main__":
     unittest.main()
