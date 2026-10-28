@@ -44,10 +44,13 @@ Decide the mode with one Bash check, `[ -f <absolute artifact root>/stories/deta
 
 ## Step 2 — Checklist
 
-BA mode, one Bash call (export, then build; stop at the first non-zero exit):
+BA mode, one Bash call (export, then build; stop at the first non-zero exit). The export's
+stdout (the whole draft) goes to a file that is shown only when the export fails:
 
 ```bash
-python <PLUGIN_ROOT>/scripts/sync-development-stories.py export --project-root <absolute artifact root> --target <absolute REQUIREMENTS path> --draft-out <absolute artifact root>/.ba-requirements/stories-export.json \
+mkdir -p <absolute artifact root>/.ba-requirements \
+&& { python <PLUGIN_ROOT>/scripts/sync-development-stories.py export --project-root <absolute artifact root> --target <absolute REQUIREMENTS path> --draft-out <absolute artifact root>/.ba-requirements/stories-export.json > <absolute artifact root>/.ba-requirements/export-output.json \
+     || { cat <absolute artifact root>/.ba-requirements/export-output.json; exit 1; }; } \
 && python <PLUGIN_ROOT>/scripts/acceptance-checklist.py build --export <absolute artifact root>/.ba-requirements/stories-export.json --requirements <absolute REQUIREMENTS path> --out <acceptance dir>/checklist.json
 ```
 
@@ -57,8 +60,7 @@ Plan mode, one Bash call:
 python <PLUGIN_ROOT>/scripts/acceptance-checklist.py build --tasks <absolute plan dir> --out <acceptance dir>/checklist.json
 ```
 
-Exit 0 → ignore the stdout (the export prints the whole draft). Any non-zero exit (exit 2 =
-invalid input or no criteria) → show the output and stop. Agents
+Any non-zero exit (exit 2 = invalid input or no criteria) → show the output and stop. Agents
 read the stories from the export JSON only, never from `detailed_stories.md`.
 
 ## Step 3 — Verify

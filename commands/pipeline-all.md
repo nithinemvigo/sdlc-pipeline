@@ -258,14 +258,21 @@ below always get the absolute form.
 
 Run it once Stage Q ends with `ba: <artifact root> (completed)` (a resumed or already-complete
 run included) and `<PLUGIN_ROOT>` is not `unset`. `<absolute REQUIREMENTS path>` =
-`<repo root>/<REQUIREMENTS path>`. One Bash call writes the stories as JSON:
-`python <PLUGIN_ROOT>/scripts/sync-development-stories.py export --project-root <absolute artifact root> --target <absolute REQUIREMENTS path> --draft-out <absolute artifact root>/.ba-requirements/stories-export.json`.
+`<repo root>/<REQUIREMENTS path>` (unchanged when already absolute). One Bash call writes the
+stories as JSON; the command's stdout (the whole draft) goes to a file that is shown only on
+failure:
+`mkdir -p <absolute artifact root>/.ba-requirements && { python <PLUGIN_ROOT>/scripts/sync-development-stories.py export --project-root <absolute artifact root> --target <absolute REQUIREMENTS path> --draft-out <absolute artifact root>/.ba-requirements/stories-export.json > <absolute artifact root>/.ba-requirements/export-output.json || { cat <absolute artifact root>/.ba-requirements/export-output.json; exit 1; }; }`.
 Record `STORIES: <absolute artifact root>/.ba-requirements/stories-export.json`; otherwise
-record `STORIES: none`. Exit 0 → ignore the command's stdout (it prints the whole draft). A
-non-zero exit → show the output and end the run with: "The BA
-analysis stopped (reason above). Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to
-continue from where it stopped." Agents read the stories from this JSON only, never from
-`detailed_stories.md`.
+record `STORIES: none`. A non-zero exit → show the output and end the run with the caller's
+line:
+- Stage Q: "The BA analysis stopped (reason above). Run
+  `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to continue from where it stopped."
+- Stage 1: "Story export failed (reason above) — fix the stories
+  (/sdlc-pipeline:ba-sync-stories) and re-run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>`."
+- Stage 5.85: "Story export failed — branch kept, no PR; fix the stories
+  (/sdlc-pipeline:ba-sync-stories) and re-run."
+
+Agents read the stories from this JSON only, never from `detailed_stories.md`.
 
 ## Stage 0.5 — Testing preferences (after Stage R and Stage Q)
 
@@ -669,14 +676,16 @@ branch.
 ## Stage 5.85 — Acceptance gate
 
 Every acceptance criterion must be proven met, or accepted by the client as a follow-up,
-before Stage 6. `<PLUGIN_ROOT>` is `unset` → say `Plugin root not found — skipping the
-acceptance gate.`, record `acceptance: skipped (plugin root not found)`, continue to Stage 5.9.
+before Stage 6. "End the run" below means: branch kept, no PR; if `REMAINING_PARTS` is not
+empty, end with the "Finish this part first …" line from the Hard rules.
+
+`<PLUGIN_ROOT>` is `unset` → record `acceptance: blocked (plugin root not found)` and end the
+run with: "Plugin root not found, so the acceptance check cannot run — branch kept, no PR.
+Re-run from the installed plugin."
 
 `<acceptance dir>` = `<absolute artifact root>/acceptance` when the ledger says
 `ba: … (completed)`; otherwise (no BA folder) `<repo root>/docs/plans/<slug>/acceptance`. It
 holds `checklist.json`, `verdicts.json`, `acceptance-report.md` and `acceptance-report.json`.
-"Ends the run" below means: branch kept, no PR; if `REMAINING_PARTS` is not empty, end with
-the "Finish this part first …" line from the Hard rules.
 
 1. **Checklist.**
    - `ba: … (completed)` → run the story export again (fresh — see "Story export" in Stage Q),
@@ -689,37 +698,44 @@ the "Finish this part first …" line from the Hard rules.
      other non-zero exit → show the output and end the run.
 2. **Verify.** Dispatch `acceptance-verifier` with: checklist path
    `<acceptance dir>/checklist.json`, verdicts output path `<acceptance dir>/verdicts.json`,
-   repo root, branch, base branch, plan directory `docs/plans/<slug>`, the Stage 4 suite
+   repo root, branch, base branch, plan directory `<repo root>/docs/plans/<slug>`, the Stage 4 suite
    summary line, and the Stage 4.5 QA findings (or "not run"). `BLOCKED` → show its reason and
    end the run; never guess verdicts. `DONE` → one Bash call:
    `python <PLUGIN_ROOT>/scripts/acceptance-checklist.py render --checklist <acceptance dir>/checklist.json --verdicts <acceptance dir>/verdicts.json --out-dir <acceptance dir>`.
    It prints `total`, counts per status, `open`, `report_md` and `report_json`. Exit 0 →
    step 5. Exit 1 → step 3 when any item is `not_met`, else step 4. Exit 2 → show the output
    and end the run.
-3. **Fix loop** (`not_met` items only). One Bash call prints each `not_met` item (ID,
-   criterion text, `fix_hint`) from `report_json` and the task file that covers it:
-   `T<NN>.<n>` → `docs/plans/<slug>/task-<NN>-*.md`; any other ID →
-   `grep -HowF -e <ID> … docs/plans/<slug>/task-*.md`. Then dispatch a fresh `implementer`
-   per affected task — **sequential**, one at a time (they share the working tree) — with the
-   task file path and its failing IDs, criterion text and fix hints. IDs no task file cites →
-   one more implementer with those IDs, texts and hints only. Re-check: dispatch
-   `acceptance-verifier` with the step 2 inputs plus the re-check IDs (this round's `not_met`
-   IDs) → `render`. Max 2 rounds; stop early when nothing is `not_met`. If any fix commit was
-   made, write `git diff <first fix commit>~1..HEAD` (the Stage 5 filters) to a file and
-   dispatch `code-reviewer` on the fix commit range only: that diff file path and the fixed
-   IDs. Its findings are handled as in Stage 5, `code-reviewer` only.
+3. **Fix loop.** Fix IDs = the `not_met` IDs (from step 2), or the IDs the client chose
+   **Fix more** for (from step 4, `not_met` or `cannot_verify`). Each round, one Bash call
+   prints each fix item (ID, criterion text, `fix_hint` or `note`) from `report_json` and the
+   task file that covers it: `T<NN>.<n>` → `docs/plans/<slug>/task-<NN>-*.md`; any other ID →
+   `grep -HowF -e <ID> … docs/plans/<slug>/task-*.md`. On entering step 3, that call also
+   prints `git rev-parse HEAD`; record it as `<pre-fix sha>`. Then dispatch a fresh
+   `implementer` per affected task — **sequential**, one at a time (they share the working
+   tree) — with the task file path and its fix IDs, criterion text and fix hints. IDs no task
+   file cites → one more implementer with those IDs, texts and hints only. Re-check: dispatch
+   `acceptance-verifier` with the step 2 inputs plus the re-check IDs (this round's fix IDs)
+   → `render`. A re-check `BLOCKED` or `render` exit 2 is handled as in step 2. From step 2:
+   max 2 rounds, the second round's fix IDs are the ones still `not_met`, and the loop stops
+   early when there are none. From step 4: exactly one round per **Fix more**. If any fix commit was made, write
+   `git diff <pre-fix sha>..HEAD` (the Stage 5 filters) to a file and dispatch
+   `code-reviewer` on the fix commit range only: that diff file path and the fixed IDs. Its
+   findings are handled as in Stage 5, `code-reviewer` only.
 4. **Client decision.** Still `not_met` or `cannot_verify` → ask ONE batched question listing
    them (ID · status · criterion · fix hint or reason) — `AskUserQuestion` with one question
    per item when there are at most 4, otherwise one message the client answers per ID. Per
    item: **Fix more** (one more step 3 round for it) | **Accept as follow-up** | **Stop**. Ask
    even when `build_mode: run to completion` — the PR never ships with an open criterion.
    - **Accept as follow-up** → edit that verdict in `<acceptance dir>/verdicts.json`:
-     `status` `accepted_followup`, `note` = the client's words. Then re-run `render`.
-   - **Fix more** → step 3 for those IDs, then back to this step for anything still open.
+     `status` `accepted_followup`, `note` = the client's words. Then re-run `render` (exit 2
+     is handled as in step 2).
+   - **Fix more** → one step 3 round for those IDs, whatever their status, then back to this
+     step for anything still open.
    - **Stop** on any item → step 5 and 6, then end the run.
 5. **Commit** the report to the branch in one Bash call:
    `git add <acceptance dir>/checklist.json <acceptance dir>/acceptance-report.md <acceptance dir>/acceptance-report.json && (git diff --cached --quiet || git commit -m "docs: acceptance report for <slug>") && rm -f <acceptance dir>/verdicts.json`.
-   (`acceptance-report.json` already holds every verdict.)
+   (`acceptance-report.json` already holds every verdict.) A non-zero exit → show the output
+   and end the run.
 6. **Ledger:** `acceptance: <met>/<total> met, <n> follow-ups, report <report_md>`.
 
 ## Stage 5.9 — Pre-ship checkpoint
@@ -764,7 +780,7 @@ TOKEN LEDGER
   requirements_dispatches: N   requirements_revisions: N / 4
   ba: <artifact root> (completed | paused | blocked | skipped)
   STORIES: <path> | none
-  acceptance: <met>/<total> met, <n> follow-ups, report <path> | skipped (no criteria | plugin root not found)
+  acceptance: <met>/<total> met, <n> follow-ups, report <path> | skipped (no criteria) | blocked (plugin root not found)
   build_mode: <run to completion | checkpoint | per-task>
   planner_dispatches: N / 4
   reviewer_dispatches: N   implementer_dispatches: N
