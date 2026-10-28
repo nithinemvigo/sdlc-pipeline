@@ -1,5 +1,5 @@
 ---
-description: Requirements-first feature pipeline. Requirements doc (client approves) → BA requirements analysis → testing prefs → Plan → reviews → CLIENT APPROVES PLAN → Execute (TDD if requested) → Unit test → QA → Code+Security review → Docs → Ship PR. Features only — bugs use /pipeline.
+description: Requirements-first feature pipeline. Requirements doc (client approves) → BA requirements analysis → testing prefs → Plan → reviews → CLIENT APPROVES PLAN → Execute (TDD if requested) → Unit test → QA → Code+Security review → Docs → Acceptance gate → Ship PR. Features only — bugs use /pipeline.
 argument-hint: <feature idea text and/or file path(s)>
 ---
 
@@ -257,10 +257,12 @@ below always get the absolute form.
 ### Story export (used by Stage 1 and Stage 5.85)
 
 Run it once Stage Q ends with `ba: <artifact root> (completed)` (a resumed or already-complete
-run included) and `<PLUGIN_ROOT>` is not `unset`. One Bash call writes the stories as JSON:
+run included) and `<PLUGIN_ROOT>` is not `unset`. `<absolute REQUIREMENTS path>` =
+`<repo root>/<REQUIREMENTS path>`. One Bash call writes the stories as JSON:
 `python <PLUGIN_ROOT>/scripts/sync-development-stories.py export --project-root <absolute artifact root> --target <absolute REQUIREMENTS path> --draft-out <absolute artifact root>/.ba-requirements/stories-export.json`.
 Record `STORIES: <absolute artifact root>/.ba-requirements/stories-export.json`; otherwise
-record `STORIES: none`. A non-zero exit → show the output and end the run with: "The BA
+record `STORIES: none`. Exit 0 → ignore the command's stdout (it prints the whole draft). A
+non-zero exit → show the output and end the run with: "The BA
 analysis stopped (reason above). Run `/sdlc-pipeline:pipeline-all <REQUIREMENTS path>` to
 continue from where it stopped." Agents read the stories from this JSON only, never from
 `detailed_stories.md`.
@@ -664,6 +666,62 @@ Dispatch `doc-writer` (gstack /document-release) with branch name, the diff file
 `00-overview.md`. It updates README and docs to match what changed and commits to the
 branch.
 
+## Stage 5.85 — Acceptance gate
+
+Every acceptance criterion must be proven met, or accepted by the client as a follow-up,
+before Stage 6. `<PLUGIN_ROOT>` is `unset` → say `Plugin root not found — skipping the
+acceptance gate.`, record `acceptance: skipped (plugin root not found)`, continue to Stage 5.9.
+
+`<acceptance dir>` = `<absolute artifact root>/acceptance` when the ledger says
+`ba: … (completed)`; otherwise (no BA folder) `<repo root>/docs/plans/<slug>/acceptance`. It
+holds `checklist.json`, `verdicts.json`, `acceptance-report.md` and `acceptance-report.json`.
+"Ends the run" below means: branch kept, no PR; if `REMAINING_PARTS` is not empty, end with
+the "Finish this part first …" line from the Hard rules.
+
+1. **Checklist.**
+   - `ba: … (completed)` → run the story export again (fresh — see "Story export" in Stage Q),
+     then one Bash call:
+     `python <PLUGIN_ROOT>/scripts/acceptance-checklist.py build --export <absolute artifact root>/.ba-requirements/stories-export.json --requirements <absolute REQUIREMENTS path> --out <acceptance dir>/checklist.json`.
+   - `ba: skipped` (this includes `REQUIREMENTS: none`) → one Bash call:
+     `python <PLUGIN_ROOT>/scripts/acceptance-checklist.py build --tasks <repo root>/docs/plans/<slug> --out <acceptance dir>/checklist.json`.
+   - Exit 2 with `No acceptance criteria found` → say `No acceptance criteria — skipping the
+     acceptance gate.`, record `acceptance: skipped (no criteria)`, continue to Stage 5.9. Any
+     other non-zero exit → show the output and end the run.
+2. **Verify.** Dispatch `acceptance-verifier` with: checklist path
+   `<acceptance dir>/checklist.json`, verdicts output path `<acceptance dir>/verdicts.json`,
+   repo root, branch, base branch, plan directory `docs/plans/<slug>`, the Stage 4 suite
+   summary line, and the Stage 4.5 QA findings (or "not run"). `BLOCKED` → show its reason and
+   end the run; never guess verdicts. `DONE` → one Bash call:
+   `python <PLUGIN_ROOT>/scripts/acceptance-checklist.py render --checklist <acceptance dir>/checklist.json --verdicts <acceptance dir>/verdicts.json --out-dir <acceptance dir>`.
+   It prints `total`, counts per status, `open`, `report_md` and `report_json`. Exit 0 →
+   step 5. Exit 1 → step 3 when any item is `not_met`, else step 4. Exit 2 → show the output
+   and end the run.
+3. **Fix loop** (`not_met` items only). One Bash call prints each `not_met` item (ID,
+   criterion text, `fix_hint`) from `report_json` and the task file that covers it:
+   `T<NN>.<n>` → `docs/plans/<slug>/task-<NN>-*.md`; any other ID →
+   `grep -HowF -e <ID> … docs/plans/<slug>/task-*.md`. Then dispatch a fresh `implementer`
+   per affected task — **sequential**, one at a time (they share the working tree) — with the
+   task file path and its failing IDs, criterion text and fix hints. IDs no task file cites →
+   one more implementer with those IDs, texts and hints only. Re-check: dispatch
+   `acceptance-verifier` with the step 2 inputs plus the re-check IDs (this round's `not_met`
+   IDs) → `render`. Max 2 rounds; stop early when nothing is `not_met`. If any fix commit was
+   made, write `git diff <first fix commit>~1..HEAD` (the Stage 5 filters) to a file and
+   dispatch `code-reviewer` on the fix commit range only: that diff file path and the fixed
+   IDs. Its findings are handled as in Stage 5, `code-reviewer` only.
+4. **Client decision.** Still `not_met` or `cannot_verify` → ask ONE batched question listing
+   them (ID · status · criterion · fix hint or reason) — `AskUserQuestion` with one question
+   per item when there are at most 4, otherwise one message the client answers per ID. Per
+   item: **Fix more** (one more step 3 round for it) | **Accept as follow-up** | **Stop**. Ask
+   even when `build_mode: run to completion` — the PR never ships with an open criterion.
+   - **Accept as follow-up** → edit that verdict in `<acceptance dir>/verdicts.json`:
+     `status` `accepted_followup`, `note` = the client's words. Then re-run `render`.
+   - **Fix more** → step 3 for those IDs, then back to this step for anything still open.
+   - **Stop** on any item → step 5 and 6, then end the run.
+5. **Commit** the report to the branch in one Bash call:
+   `git add <acceptance dir>/checklist.json <acceptance dir>/acceptance-report.md <acceptance dir>/acceptance-report.json && (git diff --cached --quiet || git commit -m "docs: acceptance report for <slug>") && rm -f <acceptance dir>/verdicts.json`.
+   (`acceptance-report.json` already holds every verdict.)
+6. **Ledger:** `acceptance: <met>/<total> met, <n> follow-ups, report <report_md>`.
+
 ## Stage 5.9 — Pre-ship checkpoint
 
 Everything is reviewed, documented and committed. Ship is the last dispatch and it is not
@@ -671,7 +729,8 @@ small — it syncs the base branch, re-runs the suite, pushes and opens the PR.
 
 `build_mode: run to completion` → continue without asking.
 
-Otherwise report the final ledger and `AskUserQuestion`:
+Otherwise report the final ledger, the acceptance summary line from Stage 5.85
+(`X/Y met · N follow-ups`, or why it was skipped), and `AskUserQuestion`:
 
 - **Ship it** — dispatch `ship-pr`.
 - **Stop here** — the branch is complete and reviewed; only the push and PR remain, and
@@ -680,7 +739,8 @@ Otherwise report the final ledger and `AskUserQuestion`:
 ## Stage 6 — Ship
 
 Dispatch `ship-pr` with repo root + branch, plan file path, review verdicts, test
-results, and the TDD/UNIT_TESTS flags for the PR body. It runs gstack /ship ONLY
+results, the TDD/UNIT_TESTS flags, and — unless `acceptance: skipped …` — the acceptance
+report path (`report_md`) and summary line, for the PR body. It runs gstack /ship ONLY
 (no superpowers skills here — /ship already syncs the base branch, re-runs the suite, pushes,
 and opens the PR).
 
@@ -704,6 +764,7 @@ TOKEN LEDGER
   requirements_dispatches: N   requirements_revisions: N / 4
   ba: <artifact root> (completed | paused | blocked | skipped)
   STORIES: <path> | none
+  acceptance: <met>/<total> met, <n> follow-ups, report <path> | skipped (no criteria | plugin root not found)
   build_mode: <run to completion | checkpoint | per-task>
   planner_dispatches: N / 4
   reviewer_dispatches: N   implementer_dispatches: N
@@ -734,6 +795,7 @@ TOKEN LEDGER
 - `/pipeline-all` runs features only. A clear bug request gets the Stage 0 redirect question.
 - Never skip a gate because a previous gate passed cleanly.
 - The full existing suite must pass before any PR, even with TDD and UNIT_TESTS off.
+- Never start Stage 6 while any acceptance criterion is `not_met` or `cannot_verify`.
 - Never let an implementer see the whole plan or another task's diff.
 - **Never let two agents read the same large document.** Distil once, pass the extract.
 - **Never pass a document's contents in a dispatch prompt.** Pass paths. Sole exception:

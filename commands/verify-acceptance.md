@@ -31,7 +31,9 @@ Parse the arguments: `<REQUIREMENTS>` (first path) and optional `--plan <plan di
 
 `<artifact root>` = `<directory of the REQUIREMENTS file>/ba/<its stem without .requirements>/`
 (e.g. `docs/features/emv/ba/02-campaigns/`); `<absolute artifact root>` =
-`<repo root>/<artifact root>`. The scripts always get absolute paths.
+`<repo root>/<artifact root>`. `<absolute REQUIREMENTS path>` = `<repo root>/<REQUIREMENTS>`
+(`<REQUIREMENTS>` unchanged when already absolute); `<absolute plan dir>` = the `--plan` value
+resolved the same way. The scripts and the verifier always get absolute paths.
 
 Decide the mode with one Bash check, `[ -f <absolute artifact root>/stories/detailed_stories.md ]`:
 
@@ -55,14 +57,15 @@ Plan mode, one Bash call:
 python <PLUGIN_ROOT>/scripts/acceptance-checklist.py build --tasks <absolute plan dir> --out <acceptance dir>/checklist.json
 ```
 
-Any non-zero exit (exit 2 = invalid input or no criteria) → show the output and stop. Agents
+Exit 0 → ignore the stdout (the export prints the whole draft). Any non-zero exit (exit 2 =
+invalid input or no criteria) → show the output and stop. Agents
 read the stories from the export JSON only, never from `detailed_stories.md`.
 
 ## Step 3 — Verify
 
 Dispatch `sdlc-pipeline:acceptance-verifier` (Sonnet) with: checklist path
 `<acceptance dir>/checklist.json`, verdicts output path `<acceptance dir>/verdicts.json`,
-repo root, branch, base branch, plan directory (`--plan` value, or `none`), and "Stage 4 test
+repo root, branch, base branch, plan directory (`<absolute plan dir>`, or `none`), and "Stage 4 test
 summary and Stage 4.5 QA findings: not available (standalone run)". No re-check IDs.
 
 - `Status: BLOCKED` → show its reason and stop. Do not guess verdicts.
