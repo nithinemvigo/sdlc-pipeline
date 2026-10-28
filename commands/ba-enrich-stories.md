@@ -10,7 +10,7 @@ You orchestrate this command. Methodology lives in the plugin's agent, skills an
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
 Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
-Enrichment is incremental: only the stories a newly resolved or revised decision materially affects change. Never regenerate all stories, never decide a gap, never treat an open or skipped gap as a decision. Do not hand-edit the document, the state or the report; everything goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works.
+Enrichment is incremental: only the stories a newly resolved or revised decision materially affects change. A confirmed decision is applied to the **detailed story** (its section in `stories/detailed_stories.md`) first, and the ultra-lean story in the requirements document is then derived from the updated detailed story, only where the primary functional outcome changes. Never regenerate all stories, never decide a gap, never treat an open or skipped gap as a decision. Do not hand-edit the document, `stories/detailed_stories.md`, the state or the report; everything goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works.
 
 ## Step 1 — Load the standards
 
@@ -33,10 +33,10 @@ Stop, with an explanation and no change, when:
 
 - `status` is not `OK` (missing or invalid atomic requirements → Phase 1; no target recorded or `section.state` `absent` → run `/sdlc-pipeline:ba-generate-stories` first; document missing → ask the user to locate it; `SECTION_AMBIGUOUS` → show `ambiguity`).
 - `state.status` is not `VALID`: the story mappings are missing or unusable. Suggest `/sdlc-pipeline:ba-sync-stories` to rebuild them from the document.
-- `section.problems` is not empty: the section needs `/sdlc-pipeline:ba-sync-stories` first.
+- `section.problems` or `detailed.problems` is not empty: the section or `stories/detailed_stories.md` needs `/sdlc-pipeline:ba-sync-stories` first. If `detailed.missing` is not empty or `section.legacy_layout_story_ids` is not empty, the project predates the current layout: suggest `/sdlc-pipeline:ba-generate-stories` first.
 - `gaps.status` is `MISSING`: there are no decisions to apply. `INVALID`: show `gaps.errors` and ask the user to correct the register (enrichment needs valid gap data; do not offer to proceed without it).
 
-If `manual_changes` shows edits made by hand, tell the user: those stories are left untouched unless a decision requires a change, and then the change is proposed to them first.
+If `manual_changes` or `detailed.edited` shows edits made by hand (to a document story or to a detailed story), tell the user: those stories are left untouched unless a decision requires a change, and then the change is proposed to them first.
 
 Resolved gaps with no recorded decision make the register invalid and are rejected by the script; do not enrich from them.
 
@@ -80,7 +80,7 @@ Give every re-invocation (here or in Step 7) a new draft file name (`<temp>/draf
 python ${CLAUDE_PLUGIN_ROOT}/scripts/validate-development-stories.py <temp>/draft.json --project-root <project root>
 ```
 
-Read the draft against the export. Check: only stories affected by a decision changed; IDs unchanged; unrelated criteria untouched; no duplicate criteria; every pending decision appears in `decisions_reviewed` with an honest outcome; no open or skipped gap used as a decision; the decision text is reflected accurately, with the user's values.
+Read the draft against the export. Check: only stories affected by a decision changed; IDs unchanged; unrelated criteria and the summary untouched; no duplicate criteria (a decision is merged into an existing criterion where it fits); the detailed story carries the full decision (rule, behaviour, plain-text criterion or non-functional target, as fits) and the ultra-lean story agrees with it and stays one short, high-level functional statement (no bullets, no Given/When/Then, no detailed conditions, no non-functional criteria); every pending decision appears in `decisions_reviewed` with an honest outcome; no open or skipped gap used as a decision; the decision text is reflected accurately, with the user's values.
 
 ## Step 8 — Preview, then write
 
@@ -88,7 +88,7 @@ Read the draft against the export. Check: only stories affected by a decision ch
 python ${CLAUDE_PLUGIN_ROOT}/scripts/sync-development-stories.py apply --project-root <project root> --draft <temp>/draft.json --expected-source-sha256 <sha> --dry-run
 ```
 
-Handle `conflicts` and `unacknowledged_changes` exactly as in `/sdlc-pipeline:ba-generate-stories` Step 7: show them, ask per story, never overwrite a manually edited story or remove a story without consent. Show the user which stories will change, then run it again without `--dry-run`.
+Handle `conflicts` and `unacknowledged_changes` exactly as in `/sdlc-pipeline:ba-generate-stories` Step 7: show them, ask per story, never overwrite a manually edited document or detailed story or remove a story without consent. Show the user which stories will change, then run it again without `--dry-run`.
 
 ## Step 9 — Check the result and summarise
 
@@ -105,12 +105,13 @@ Stories unchanged: <apply.unchanged count>
 New stories proposed: <count proposed>   (added: <count approved and created>)
 
 Updated stories:
-- US-001 — <what changed, e.g. account lockout criteria added>
+- US-001 — <what changed, e.g. account lockout criteria added>   (detailed: <changed | unchanged>; ultra-lean: <changed | unchanged>)
 
-Document updated:
-- <target path>   (backup: <apply.backup>)
+Files updated:
+- stories/detailed_stories.md   (<apply.detailed_changed count> detailed stories written; backup: <apply.detailed_backup, if any>)
+- <target path>   (ultra-lean stories; backup: <apply.backup>)
 
-Report: report/phase3-report.html (<generated | stale>)
+Report: report/phase3-report.html (built from stories/detailed_stories.md; <generated | stale>)
 
 Validation: <Passed | Failed>
 ```

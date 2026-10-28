@@ -2,9 +2,12 @@
 """Generate the consolidated Phase 3 HTML report (ba-requirements plugin).
 
 The report is a read-only view, never a source of truth. It is rebuilt from:
-  - the managed '# Development Stories' section of the target Markdown document (stories),
+  - the consolidated detailed stories stories/detailed_stories.md (the full functional and
+    non-functional story detail; the ultra-lean entries in the requirements document are not shown),
   - gaps/gaps.json (gaps and recorded decisions),
-  - stories/story-generation-state.json (target document, traceability and sync metadata only).
+  - stories/story-generation-state.json (target document, traceability, hashes and sync metadata).
+The managed '# Development Stories' section of the target document is read only to check that every
+story has a matching entry and to report whether the two representations are in sync.
 
 All source text is HTML-escaped. The page is self-contained: no server, CDN, database or
 external resource; its small script only filters stories already in the page.
@@ -25,6 +28,7 @@ import argparse
 import html
 import importlib.util
 import os
+import re
 import sys
 
 NOT_RECORDED = "Not recorded"
@@ -78,12 +82,31 @@ def build_model(paths):
 
     atomic_status, _, requirements, atomic_raw = common.load_atomic(paths)
     gaps = common.load_gaps(paths, requirements)
-    errors, warnings = validator.validate_managed_section(doc.stories, doc.problems, requirements, state)
+    detailed = common.scan_detailed(paths)
+    legacy_files = common.scan_legacy_files(paths)
+    errors, warnings, pair = validator.validate_story_set(doc.stories, doc.problems, detailed, requirements, state, legacy_files)
 
     notes = []
-    out_of_sync = doc.section_hash != state["managed_section_hash"]
-    if out_of_sync:
-        notes.append("The Development Stories section was edited since the last synchronisation. Run /sdlc-pipeline:ba-sync-stories to reconcile.")
+    differing = set()
+    for key in ("detailed_missing", "detailed_extra", "detailed_untracked", "lean_edited", "lean_stale"):
+        differing |= set(pair[key])
+    known_hash = state.get("detailed_document_hash")
+    file_modified = bool(known_hash) and detailed.exists and detailed.file_hash != known_hash
+    out_of_sync = doc.section_hash != state["managed_section_hash"] or bool(differing or pair["detailed_edited"]) or file_modified
+    if doc.section_hash != state["managed_section_hash"]:
+        notes.append("The Development Stories section in the requirements document was edited since the last synchronisation. Run /sdlc-pipeline:ba-sync-stories to reconcile.")
+    if pair["detailed_edited"]:
+        notes.append("Detailed stories edited since the last synchronisation: " + ", ".join(pair["detailed_edited"]) + ". Run /sdlc-pipeline:ba-sync-stories to record them.")
+    elif file_modified:
+        notes.append(f"{common.DETAILED_RELATIVE} was changed since the last synchronisation. Run /sdlc-pipeline:ba-sync-stories to record it.")
+    if pair["lean_stale"]:
+        notes.append("The requirements document entry needs updating from its detailed story for: " + ", ".join(pair["lean_stale"]) + ". Run /sdlc-pipeline:ba-generate-stories to update it.")
+    if not detailed.exists:
+        notes.append(f"{common.DETAILED_RELATIVE} does not exist. Run /sdlc-pipeline:ba-generate-stories to create it.")
+    elif pair["detailed_missing"]:
+        notes.append(f"No detailed story exists in {common.DETAILED_RELATIVE} for: " + ", ".join(pair["detailed_missing"]) + ". Run /sdlc-pipeline:ba-generate-stories to create them.")
+    if legacy_files:
+        notes.append("Files from an earlier plugin version are no longer used: " + ", ".join(legacy_files) + ".")
     if atomic_status is None and common.sha256_bytes(atomic_raw) != state["atomic_requirements_hash"]:
         notes.append("The atomic requirements changed since the stories were last synchronised.")
     if gaps["status"] == "OK" and state.get("gap_register_hash") and gaps["sha256"] != state["gap_register_hash"]:
@@ -93,6 +116,10 @@ def build_model(paths):
         "state": state,
         "target": state["target_document"],
         "doc": doc,
+        "detailed": detailed,
+        "legacy_files": legacy_files,
+        "pair": pair,
+        "differing": sorted(differing | set(pair["detailed_edited"]), key=common.story_number),
         "requirements": requirements,
         "gaps": gaps,
         "validation_errors": errors,
@@ -105,18 +132,68 @@ def build_model(paths):
 # ---------------------------------------------------------------------------- render
 
 
+_LABEL_PARAGRAPH_RE = re.compile(r"^([A-Z][A-Za-z /&-]{2,40}):\s+(.*)$", re.DOTALL)
+
+
 def paragraphs(text):
-    return "".join(f"<p>{esc(part)}</p>" for part in text.split("\n\n") if part)
+    out = []
+    for part in text.split("\n\n"):
+        if not part:
+            continue
+        match = _LABEL_PARAGRAPH_RE.match(part)
+        if match:
+            out.append(f"<p><b>{esc(match.group(1))}:</b> {esc(match.group(2))}</p>")
+        else:
+            out.append(f"<p>{esc(part)}</p>")
+    return "".join(out)
 
 
-def render_story(story):
-    criteria = "".join(f"<li>{esc(item)}</li>" for item in story["acceptance_criteria"])
-    search = " ".join([story["story_id"], story["summary"], story["description"]] + story["acceptance_criteria"]).lower()
+def pair_badge(story_id, pair):
+    """How the story's entry in the requirements document relates to this detailed story."""
+    if story_id in pair["detailed_missing"]:
+        return '<span class="badge s-missing">No detailed story</span>'
+    if story_id in pair["detailed_extra"]:
+        return '<span class="badge s-stale">Not in the requirements document</span>'
+    if story_id in pair["lean_stale"] or story_id in pair["lean_edited"] or story_id in pair["detailed_untracked"]:
+        return '<span class="badge s-stale">Requirements document out of sync</span>'
+    return '<span class="badge s-sync">Requirements document in sync</span>'
+
+
+def story_text(story):
+    parts = [story["story_id"], story["summary"], story["description"]]
+    for key in common.DETAILED_LIST_KEYS:
+        parts += story[key]
+    return " ".join(parts).lower()
+
+
+def render_story(story, pair):
+    """A detailed story: its fields, functional and non-functional, in the same order as stories/detailed_stories.md (an empty optional field is left out there and here)."""
+    sections = [f'<h4>Description</h4>{paragraphs(story["description"])}']
+    for key, label, kind, _ in common.DETAILED_FIELDS:
+        if kind == "text":
+            continue
+        items = story[key]
+        if not items:
+            continue
+        css = ' class="nfr"' if key == "non_functional_requirements" else ""
+        tag = "ol" if kind == "numbered" else "ul"
+        body = f"<{tag}>" + "".join(f"<li>{esc(item)}</li>" for item in items) + f"</{tag}>"
+        sections.append(f"<div{css}><h4>{esc(label)}</h4>{body}</div>")
     return (
-        f'<article class="story" id="{esc(story["story_id"])}" data-search="{esc(search)}">'
-        f'<h3><span class="sid">{esc(story["story_id"])}</span> <span class="ssum">{esc(story["summary"])}</span></h3>'
-        f'<h4>Detailed Description</h4>{paragraphs(story["description"])}'
-        f'<h4>Acceptance Criteria</h4><ol>{criteria}</ol></article>'
+        f'<article class="story" id="{esc(story["story_id"])}" data-search="{esc(story_text(story))}">'
+        f'<h3><span class="sid">{esc(story["story_id"])}</span> <span class="ssum">{esc(story["summary"])}</span> {pair_badge(story["story_id"], pair)}</h3>'
+        f'{"".join(sections)}</article>'
+    )
+
+
+def render_missing_story(story_id, summary, pair):
+    """A story that has no detailed story. The shortened requirements-document text is deliberately not substituted."""
+    search = f"{story_id} {summary}".lower()
+    return (
+        f'<article class="story" id="{esc(story_id)}" data-search="{esc(search)}">'
+        f'<h3><span class="sid">{esc(story_id)}</span> <span class="ssum">{esc(summary)}</span> {pair_badge(story_id, pair)}</h3>'
+        f'<p class="warn">{esc(story_id)} has no detailed story in {esc(common.DETAILED_RELATIVE)}, so its full description and criteria cannot be shown. '
+        'Run /sdlc-pipeline:ba-generate-stories to create it.</p></article>'
     )
 
 
@@ -235,13 +312,27 @@ def render_decisions_section(model, stories_by_gap, doc_ids):
 def render_traceability(model, doc_ids):
     state = model["state"]
     requirements = model["requirements"] or {}
+    gap_ctx = model["gaps"]
+    statuses = {g["gap_id"]: g["status"] for g in gap_ctx["register"] or []} if gap_ctx["status"] == "OK" else {}
+    summaries = {s["story_id"]: s["summary"] for s in model["doc"].stories}
+    summaries.update({story_id: story["summary"] for story_id, story in model["detailed"].stories.items()})
     by_req = {}
     discrepancies = []
     state_ids = set()
+    story_rows = []
     for entry in state["stories"]:
         state_ids.add(entry["story_id"])
         for req_id in entry.get("source_requirement_ids", []):
             by_req.setdefault(req_id, []).append(entry["story_id"])
+        reqs = ", ".join(entry.get("source_requirement_ids", [])) or "None recorded"
+        gaps = ", ".join(
+            f"{gap_id} ({STATUS_LABEL.get(statuses.get(gap_id), 'status unavailable')})" for gap_id in entry.get("related_gap_ids", [])
+        ) or "None"
+        applied = ", ".join(entry.get("applied_decisions", [])) or "None"
+        story_rows.append(
+            f"<tr><td>{story_links([entry['story_id']], doc_ids)}</td><td>{esc(summaries.get(entry['story_id'], NOT_RECORDED))}</td>"
+            f"<td>{esc(reqs)}</td><td>{esc(gaps)}</td><td>{esc(applied)}</td></tr>"
+        )
     for story_id in sorted(doc_ids - state_ids):
         discrepancies.append(f"{story_id} is in the document but has no recorded mapping.")
     for story_id in sorted(state_ids - doc_ids):
@@ -262,8 +353,11 @@ def render_traceability(model, doc_ids):
         problems = '<div class="banner warn-box"><b>Traceability discrepancies</b><ul>' + "".join(f"<li>{esc(d)}</li>" for d in discrepancies) + "</ul></div>"
     return (
         '<section id="traceability"><h2>Traceability</h2>'
-        '<p class="note">Requirement-to-story mappings from the internal story state. They are shown here only; they are not part of the stories.</p>'
-        f'{problems}<div class="tablewrap"><table><thead><tr><th scope="col">Requirement</th><th scope="col">Title</th><th scope="col">Stories</th></tr></thead>'
+        '<p class="note">Requirement-to-story and gap-to-story mappings from the internal story state. They are shown here only; they are not part of the stories.</p>'
+        f'{problems}<h4>Stories</h4><div class="tablewrap"><table><thead><tr><th scope="col">Story</th><th scope="col">Summary</th>'
+        '<th scope="col">Requirements</th><th scope="col">Gaps</th><th scope="col">Decisions applied</th></tr></thead>'
+        f'<tbody>{"".join(story_rows)}</tbody></table></div>'
+        f'<h4>Requirements</h4><div class="tablewrap"><table><thead><tr><th scope="col">Requirement</th><th scope="col">Title</th><th scope="col">Stories</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table></div>{extra}</section>'
     )
 
@@ -291,10 +385,12 @@ section{margin:30px 0}h2{font-size:20px;margin:0 0 4px}
 .gap{border-left:4px solid var(--line)}
 .story h3,.gap h3{margin:0 0 6px;font-size:16px}.sid{font-family:Consolas,monospace;font-weight:700}
 h4{margin:12px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-.story p,.gap p{margin:4px 0}.story ol{margin:4px 0 4px 22px;padding:0}.story li{margin:4px 0}
+.nfr{border-left:3px solid var(--accent);padding-left:10px;margin-top:6px}
+.story p,.gap p{margin:4px 0}.story ol,.story ul{margin:4px 0 4px 22px;padding:0}.story li{margin:4px 0}
 .badge{font-size:12px;font-weight:600;padding:1px 9px;border-radius:10px;color:#fff;white-space:nowrap}
 .p-critical{background:var(--critical)}.p-high{background:var(--high)}.p-medium{background:var(--medium)}.p-low{background:var(--low)}
 .s-open{background:var(--open)}.s-resolved{background:var(--resolved)}.s-skipped{background:var(--skipped)}
+.s-sync{background:var(--resolved)}.s-stale{background:var(--high)}.s-missing{background:var(--critical)}
 .reqs,.decisions{list-style:none;margin:0;padding:0}
 .reqs li{display:grid;grid-template-columns:84px 1fr;gap:10px;padding:3px 0;border-bottom:1px dashed var(--line)}
 .rid{font-family:Consolas,monospace;font-weight:600}
@@ -327,8 +423,11 @@ def render_html(model):
     doc = model["doc"]
     state = model["state"]
     gap_ctx = model["gaps"]
-    stories = sorted(doc.stories, key=lambda s: common.story_number(s["story_id"]) if common.STORY_ID_RE.match(s["story_id"]) else 10**9)
-    doc_ids = {s["story_id"] for s in doc.stories}
+    pair = model["pair"]
+    detailed = model["detailed"].stories
+    lean_by_id = {s["story_id"]: s for s in doc.stories}
+    doc_ids = set(lean_by_id) | set(detailed)
+    stories = sorted(doc_ids, key=lambda story_id: common.story_number(story_id) if common.STORY_ID_RE.match(story_id) else 10**9)
     stories_by_gap = {}
     for entry in state["stories"]:
         for gap_id in entry.get("related_gap_ids", []):
@@ -361,7 +460,15 @@ def render_html(model):
     total_reqs = len(model["requirements"]) if model["requirements"] else None
     coverage = f"{len(covered)} of {total_reqs}" if total_reqs is not None else str(len(covered))
 
-    stories_html = "".join(render_story(s) for s in stories) or '<p class="muted">The section contains no stories.</p>'
+    stories_html = "".join(
+        render_story(detailed[story_id], pair) if story_id in detailed else render_missing_story(story_id, lean_by_id[story_id]["summary"], pair)
+        for story_id in stories
+    ) or '<p class="muted">There are no stories yet.</p>'
+    differing = model["differing"]
+    if differing:
+        lean_sync = f"Document and detailed stories differ ({len(differing)} stor{'y' if len(differing) == 1 else 'ies'})"
+    else:
+        lean_sync = "Document and detailed stories match"
     generated = esc(model["generated_at"])
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -375,7 +482,7 @@ def render_html(model):
 <a class="skip" href="#overview">Skip to the report</a>
 <header>
 <h1>Phase 3 Report</h1>
-<p class="stamp">Generated <time>{generated}</time> &middot; read-only view of the Development Stories section, gaps/gaps.json and recorded decisions</p>
+<p class="stamp">Generated <time>{generated}</time> &middot; read-only view of the detailed stories (stories/detailed_stories.md), gaps/gaps.json and recorded decisions</p>
 <nav aria-label="Report sections"><ul>
 <li><a href="#overview">Overview</a></li><li><a href="#stories">Development Stories</a></li><li><a href="#gaps-open">Open Gaps</a></li>
 <li><a href="#gaps-resolved">Resolved Gaps</a></li><li><a href="#gaps-skipped">Skipped Gaps</a></li><li><a href="#decisions">Business Decisions</a></li><li><a href="#traceability">Traceability</a></li>
@@ -387,15 +494,16 @@ def render_html(model):
 <dl class="facts">
 <dt>Report generated</dt><dd>{generated}</dd>
 <dt>Target document</dt><dd>{esc(model['target'])}</dd>
-<dt>Stories</dt><dd>{len(stories)}</dd>
+<dt>Detailed stories</dt><dd>{len(detailed)} ({esc(common.DETAILED_RELATIVE)})</dd>
+<dt>Requirements document</dt><dd>{len(lean_by_id)} ultra-lean stories</dd>
 <dt>Gaps</dt><dd>{esc(gap_fact)}</dd>
 <dt>Requirements covered</dt><dd>{esc(coverage)}</dd>
 <dt>Story validation</dt><dd>{esc(validation)}</dd>
-<dt>Synchronisation</dt><dd>{esc(sync_status)}</dd>
+<dt>Synchronisation</dt><dd>{esc(sync_status)} &middot; {esc(lean_sync)}</dd>
 <dt>Last synchronised</dt><dd>{esc(state.get('last_successful_sync') or NOT_RECORDED)}</dd>
 </dl>{note_list}{issue_list}</section>
 <section id="stories"><h2>Development Stories <span class="count">{len(stories)}</span></h2>
-<p class="note">Read from the Development Stories section of {esc(model['target'])}. Edit stories there, not here.</p>
+<p class="note">Detailed functional and non-functional stories, read from {esc(common.DETAILED_RELATIVE)}. The requirements document {esc(model['target'])} holds only the ultra-lean version of each story. Edit stories in their files, not here.</p>
 <p><input id="story-search" type="search" placeholder="Search stories" aria-label="Search stories"> <span id="story-shown" class="muted" aria-live="polite"></span></p>
 {stories_html}</section>
 {gap_section('gaps-open', 'Open Gaps', 'Awaiting a decision. Stories were written from the requirements as they stand; no answer was assumed.', by_status['open'], gap_ctx, lambda g: render_gap(g, stories_by_gap, doc_ids, show_decisions=True))}
@@ -404,7 +512,7 @@ def render_html(model):
 {render_decisions_section(model, stories_by_gap, doc_ids)}
 {render_traceability(model, doc_ids)}
 </main>
-<footer>Generated report. The authoritative data is the Development Stories section of the target document and gaps/gaps.json; edits made here are not saved.</footer>
+<footer>Generated report. The authoritative data is the detailed stories in stories/detailed_stories.md and gaps/gaps.json; edits made here are not saved.</footer>
 <script>{JS}</script>
 </body>
 </html>
@@ -434,7 +542,8 @@ def generate(paths):
     missing = [marker for marker in REQUIRED_MARKERS if marker not in written]
     if missing or f'data-generated="{esc(model["generated_at"])}"' not in written:
         return 2, "FAILED: the written report did not pass read-back verification (missing sections or timestamp); regenerate it."
-    return 0, f"PASSED: wrote report/phase3-report.html ({len(model['doc'].stories)} stor{'y' if len(model['doc'].stories) == 1 else 'ies'}, generated {model['generated_at']})."
+    count = len(set(model["detailed"].stories) | {s["story_id"] for s in model["doc"].stories})
+    return 0, f"PASSED: wrote report/phase3-report.html ({count} stor{'y' if count == 1 else 'ies'} from stories/detailed_stories.md, generated {model['generated_at']})."
 
 
 def main():

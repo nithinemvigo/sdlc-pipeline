@@ -89,15 +89,15 @@ INPUTS = {
     "gate_validation": ("register_gate",),
     "generate_stories": ("atomic_requirements", "register_gate"),
     "enrich_stories": ("atomic_requirements", "register_decisions"),
-    "phase3_report": ("register_full", "stories_state", "stories_section"),
-    "final_validation": ("atomic_requirements", "register_full", "stories_state", "stories_section"),
+    "phase3_report": ("register_full", "stories_state", "stories_section", "stories_detailed"),
+    "final_validation": ("atomic_requirements", "register_full", "stories_state", "stories_section", "stories_detailed"),
 }
 RECORDED_OUTPUTS = {
     "atomic_requirements": ("atomic_requirements",),
     "gap_analysis": ("register_analysis", "gap_report_html"),
     "gap_triage": ("register_full",),
     "generate_stories": ("stories_state",),
-    "enrich_stories": ("stories_state", "stories_section"),
+    "enrich_stories": ("stories_state", "stories_section", "stories_detailed"),
     "phase3_report": ("report_html",),
 }
 ENFORCED_OUTPUTS = {
@@ -456,6 +456,9 @@ def fingerprint(layout, state, kind):
             return common.read_document(target).section_hash
         except Exception:
             return None
+    if kind == "stories_detailed":
+        # The authoritative detailed stories: any change to the single file stories/detailed_stories.md counts.
+        return file_fingerprint(layout.stories.detailed_file)
     if kind == "gap_report_html":
         return existence_fingerprint(layout.gap_report)
     if kind == "report_html":
@@ -559,7 +562,7 @@ def check_stories(layout, state, need_decisions_applied):
     except (common.Refused, common.IOFailure) as exc:
         return [str(exc)] + [str(d) for d in getattr(exc, "details", [])[:5]]
     problems = []
-    errors, _ = sync.validator.validate_managed_section(ctx.doc.stories, ctx.doc.problems, ctx.requirements, ctx.state)
+    errors, _, _ = sync.validator.validate_story_set(ctx.doc.stories, ctx.doc.problems, ctx.detailed, ctx.requirements, ctx.state, ctx.legacy_files)
     problems.extend(errors[:5])
     uncovered = sync.uncovered_requirements(ctx)
     if uncovered:
@@ -862,7 +865,7 @@ def output_paths(layout, op_name):
         "phase3_report": [layout.report],
     }.get(op_name, [])
     if op_name in ("generate_stories", "enrich_stories"):
-        paths = [layout.stories.state]
+        paths = [layout.stories.state, layout.stories.detailed_file]
         target = story_target(layout)
         if target:
             paths.append(target)
@@ -1034,8 +1037,8 @@ def cmd_summary(layout, args):
         if ctx.state is not None:
             covered = {r for entry in ctx.state["stories"] for r in entry.get("source_requirement_ids", [])}
             result["stories"] = {
-                "in_document": len(ctx.doc.stories), "requirements_covered": len(covered),
-                "requirements_analysed": len(ctx.requirements),
+                "in_document": len(ctx.doc.stories), "detailed_stories": len(ctx.detailed.stories),
+                "requirements_covered": len(covered), "requirements_analysed": len(ctx.requirements),
             }
     except (common.Refused, common.IOFailure):
         pass

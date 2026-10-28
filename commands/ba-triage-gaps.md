@@ -45,13 +45,18 @@ python -c "import tempfile; print(tempfile.mkdtemp(prefix='ba-triage-'))"
 
 Open with one short line: how many gaps are eligible and how many of those were skipped earlier. Then go through the queue in the order returned, one gap at a time, exactly as the `gap-triage` skill describes: present the gap with its progress, ask what the user wants, capture and confirm any decision, save immediately, and continue.
 
-Supported actions: provide a decision; skip this gap; skip all remaining gaps; reopen a resolved gap; revise a recorded decision (only when asked); stop.
+Ask each gap with AskUserQuestion (never as a printed list). The question holds the progress, ID, priority and one concise gap statement; the user's free-text decision goes in the automatic **Other** entry, which you do not add yourself. Options per gap:
+
+- Critical and High: **Skip for now**; **Stop triage** (AskUserQuestion needs two options).
+- Medium and Low: **Skip this gap**; **Skip all remaining gaps** (all remaining Medium/Low gaps in this run).
+
+Reopening a resolved gap and revising a recorded decision are available when the user asks, but are not listed as options.
 
 Hard rules (details in `gap-triage-rules.md`):
 
 - A gap becomes resolved only after the user confirms the captured decision.
-- Skipping never adds a decision, deletes or downgrades the gap, or counts as resolved.
-- Skip-all and stop write nothing further; confirmed changes already saved stay.
+- Skipping never adds a decision, deletes or downgrades the gap, or counts as resolved. Record every skip immediately through the store and keep skipped gaps for later triage.
+- Skip all remaining applies to Medium and Low gaps only; each remaining open Medium/Low gap is recorded as skipped. Stop writes nothing further; confirmed changes already saved stay.
 - After every save, read the JSON result. Do not report success unless `ok` is true; for exit code 3 say the register saved but the report needs `regenerate-report`.
 - Present each gap at most once per session. Do not make business decisions for the user.
 

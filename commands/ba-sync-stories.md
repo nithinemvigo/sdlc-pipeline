@@ -1,5 +1,5 @@
 ---
-description: Detect changes made outside the plugin to the development stories or their sources and reconcile them safely (BA Requirements, Phase 3)
+description: Detect changes made outside the plugin to the requirements-document stories, stories/detailed_stories.md or their sources and reconcile them safely (BA Requirements, Phase 3)
 allowed-tools: Read, Write, Glob, Grep, AskUserQuestion, Bash(python:*), Bash(python3:*), Bash(py:*)
 ---
 
@@ -10,7 +10,7 @@ You detect and reconcile changes made outside the plugin. You never silently rep
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
 Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
-Do not rewrite stories, decide gaps or edit the requirements. This command records accepted manual edits in the story state (the document is not touched) and refreshes the report. Every read and write goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works.
+Do not rewrite stories, decide gaps or edit the requirements. Every story exists as an ultra-lean version in the requirements document and as a detailed version in the single file `stories/detailed_stories.md` (authoritative), tied together by the Story ID. This command records accepted manual edits to either version in the story state (the document is not touched) and refreshes the report. Every read and write goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works.
 
 ## Step 1 — Load the standards
 
@@ -30,8 +30,9 @@ Keep `target.source_sha256`.
 
 Report, in plain language, only what the output shows:
 
-- **Section problems** (`section.problems`): the section breaks the story contract (extra fields, invalid or duplicate IDs, stray text). List them. These must be fixed in the document before anything can be reconciled; offer no automatic repair. Stop after listing them.
-- **Edited stories** (`manual_changes.edited`, with `edited_details`): which fields changed (summary, description, criteria added, how many criteria removed).
+- **Section and file problems** (`section.problems`, `detailed.problems`, `section.legacy_layout_story_ids`): the Development Stories section or `stories/detailed_stories.md` breaks the story contract (extra fields, invalid or duplicate IDs, a heading without a short summary, stray text, or the layout of an earlier plugin version). List them. These must be fixed in the document or file before anything can be reconciled; offer no automatic repair. Stop after listing them.
+- **Edited document stories** (`manual_changes.edited`, with `edited_details`): which parts changed (summary, criteria added, how many criteria removed).
+- **Edited detailed stories** (`detailed.edited`, `detailed.file_modified`), **detailed stories deleted by hand** (`detailed.deleted_by_hand`), **detailed stories without a document entry** (`detailed.without_lean_story`), **stories with no detailed story yet** (`detailed.missing`), **stories whose ultra-lean version needs updating** (`detailed.lean_needs_update`) and **files from earlier plugin versions** (`detailed.legacy_files`: `stories/detailed/`, `stories/lean-stories.md`, per-story files; no longer used).
 - **Added stories** (`added`), **deleted stories** (`removed`), **ID changes** (`id_changes`: a removed and an added story with identical content).
 - **Edits outside the section** (`outside_section_modified`): preserved, never overwritten; mention them.
 - **Formatting-only changes** (`formatting_only`): no content differs.
@@ -45,9 +46,10 @@ If nothing needs reconciling (`section_modified` false, no differences, state va
 
 Ask with AskUserQuestion for each kind of change that touches user edits or story identity:
 
-- Edited, added or reformatted stories: **accept as the new baseline** (record them as they are) or **leave for now** (change nothing).
+- Edited, added or reformatted document stories, and edited detailed stories: offer **keep** (accept as the new baseline: record them as they are), **reconcile** (tell the user to run `/sdlc-pipeline:ba-generate-stories`; the agent carries the edit into the other version so both agree and the user approves each change), **regenerate** (overwrite the edited version from the other one with `/sdlc-pipeline:ba-generate-stories`; the replaced file is kept in the backups) or **leave for now** (change nothing). After **keep** of a detailed edit, say that the ultra-lean story still needs updating (`detailed.lean_needs_update`); `ba-generate-stories` does that.
+- Detailed stories deleted by hand: restoring them is done by `/sdlc-pipeline:ba-generate-stories` with the user's consent for that story; there is nothing to accept.
 - Deleted stories: **confirm deletion** — their IDs are retired and never reused — or **leave for now**. Restoring a deleted story is done by `/sdlc-pipeline:ba-generate-stories` with the user's consent.
-- Renamed stories (`id_changes`): **accept the rename** (the mapping moves to the new ID, the old ID is retired) or leave for now.
+- Renamed stories (`id_changes`): **accept the rename** (the mapping moves to the new ID, the old ID is retired, and the detailed story follows the new ID in `stories/detailed_stories.md` after a backup) or leave for now.
 - New stories (added, or a state rebuilt from the document): each needs its source requirement IDs. Work them out from the story text and the atomic requirements, state your reasoning, and ask the user to confirm any you are not confident about. Never guess silently. Write the confirmed mapping with the Write tool to a temporary file outside the project and the plugin, as `{"US-020": {"source_requirement_ids": ["REQ-006"]}}`.
 
 ## Step 5 — Record the accepted changes
@@ -62,15 +64,16 @@ Read the JSON; do not report success unless `ok` is true. Exit code `3` means th
 
 ## Step 6 — Verify and summarise
 
-Run `inspect` again to confirm that `manual_changes.section_modified` is false and nothing is left unreconciled, then report real values:
+Run `inspect` again to confirm that `manual_changes.section_modified` is false, `detailed.edited` is empty and nothing else is left unreconciled, then report real values:
 
 ```text
 Story synchronisation completed.
 
-Changes detected: <edited n, added n, deleted n, renamed n, outside-section edits yes/no>
+Changes detected: <document stories edited n, detailed stories edited n, added n, deleted n, renamed n, outside-section edits yes/no>
 Accepted into the story state: <list>
+Ultra-lean stories still needing an update from their detailed story: <list or none>
 Left unreconciled at your request: <list or none>
-Document modified: no (the document was not touched)
+Document modified: no (the requirements document was not touched; stories/detailed_stories.md changes only for an accepted rename or retirement, after a backup)
 
 Report: report/phase3-report.html (<generated | stale>)
 ```

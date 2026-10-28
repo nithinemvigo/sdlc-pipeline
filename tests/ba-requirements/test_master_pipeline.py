@@ -87,7 +87,8 @@ class CommandFileTests(unittest.TestCase):
             "Nothing the user selects can bypass the gate",
             "Resolve the blocking gaps now",
             "Exit and resume later",
-            "exactly four fields",
+            "single consolidated file `stories/detailed_stories.md`",
+            "only Story ID, concise summary and one functional acceptance-criteria statement",
             "skip all remaining gaps",
             "STALE",
             "UNAVAILABLE",
@@ -290,8 +291,10 @@ class SkipAllTests(PipelineCase):
     def test_skip_all_remaining_does_not_bypass_the_gate(self):
         self.default_gaps()
         self.decide("GAP-001", "Lock the account after five failed attempts for 30 minutes.")
-        # "Skip all remaining" makes no store call: GAP-002 (High) and GAP-003 stay open.
-        self.assertEqual(self.counts(), {"open": 2, "skipped": 0, "resolved": 1})
+        # "Skip all remaining" (Medium/Low only) records GAP-003 as skipped; the High GAP-002 is untouched.
+        code, result = self.gaps("skip", "--gap-id", "GAP-003")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.counts(), {"open": 1, "skipped": 1, "resolved": 1})
         self.assertEqual(self.blockers(), ["GAP-002"])
         # Skipping the blocker individually changes its status but not the gate.
         code, result = self.gaps("skip", "--gap-id", "GAP-002")

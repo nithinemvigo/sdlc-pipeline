@@ -354,14 +354,18 @@ class TriageTests(ProjectCase):
         self.assertEqual(next(g for g in self.register() if g["gap_id"] == "GAP-001")["decisions_recorded"], [])
         self.assertEqual(self.resolve("GAP-005")[0], 0)
 
-    def test_skip_all_leaves_register_untouched_and_statuses_preserved(self):  # scenario 16
+    def test_skip_all_remaining_skips_only_open_medium_and_low_gaps(self):  # scenario 16
         self.cli("skip", "--gap-id", "GAP-001")
         self.resolve("GAP-005")
-        before = self.register_bytes()
-        self.cli("list")  # skip-all is a session control: no write command is issued
-        self.assertEqual(self.register_bytes(), before)
+        # Skip all remaining (offered on a Medium/Low gap): every remaining open Medium/Low gap is skipped, one store call each.
+        remaining = [g for g in self.cli("list")[1]["queue"] if g["priority"] in ("Medium", "Low") and g["status"] == "open"]
+        self.assertEqual([g["gap_id"] for g in remaining], ["GAP-003", "GAP-004"])
+        for gap in remaining:
+            self.assertEqual(self.cli("skip", "--gap-id", gap["gap_id"])[0], 0)
         statuses = {g["gap_id"]: g["status"] for g in self.register()}
-        self.assertEqual(statuses, {"GAP-001": "skipped", "GAP-002": "open", "GAP-003": "open", "GAP-004": "open", "GAP-005": "resolved"})
+        # The open High gap is untouched, nothing becomes resolved, and no decision is recorded.
+        self.assertEqual(statuses, {"GAP-001": "skipped", "GAP-002": "open", "GAP-003": "skipped", "GAP-004": "skipped", "GAP-005": "resolved"})
+        self.assertEqual([g["gap_id"] for g in self.register() if g["decisions_recorded"] and g["status"] != "resolved"], [])
 
     def test_resume_includes_skipped_and_excludes_resolved(self):  # scenario 17
         self.cli("skip", "--gap-id", "GAP-001")

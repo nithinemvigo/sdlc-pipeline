@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Development Stories Draft",
-  "description": "Internal structured representation used while generating, enriching and validating development stories. The user-facing artifact is the '# Development Stories' Markdown section; individual stories there carry only Story ID, Summary, Detailed Description and Acceptance Criteria. Requirement and gap mappings are kept in stories/story-generation-state.json and are derived or recorded by scripts/sync-development-stories.py, never written into a story.",
+  "description": "Internal structured representation used while generating, enriching and validating development stories. Each story is saved twice under one Story ID: as an ultra-lean story in the '# Development Stories' Markdown section of the requirements document (Story ID, a concise summary label and one functional acceptance-criteria statement: 'summary' and 'lean_acceptance_criteria' below) and as a detailed story in the single consolidated file stories/detailed_stories.md (the 'detailed' object below, which also carries the non-functional requirements). The lean story is derived from the detailed story. Requirement and gap mappings are kept in stories/story-generation-state.json and are derived or recorded by scripts/sync-development-stories.py, never written into a story.",
   "type": "object",
   "properties": {
     "stories": {
@@ -16,26 +16,70 @@
             "pattern": "^US-[0-9]{3,}$"
           },
           "summary": {
+            "description": "A concise, meaningful one-line label of the story's core capability, typically 3-7 words (for example 'Registered user login'); understandable at a glance, not a full explanatory sentence. Shared by both representations: the heading of the story in the requirements document and in the detailed stories file.",
             "type": "string",
             "minLength": 1,
             "pattern": "\\S"
           },
-          "description": {
-            "description": "Plain paragraphs separated by a blank line; the 'As a ..., I want ..., so that ...' form where it fits.",
-            "type": "string",
-            "minLength": 1,
-            "pattern": "\\S"
-          },
-          "acceptance_criteria": {
-            "description": "Without numbering or bullets; numbering is added when the story is written.",
+          "lean_acceptance_criteria": {
+            "description": "The ULTRA-LEAN acceptance criteria written into the requirements document: exactly ONE short, high-level statement of the primary expected functional outcome from the user's perspective. Not several bullets, not Given/When/Then, no detailed conditions, alternate flows, edge cases or exhaustive business rules, no implementation detail, no non-functional criteria, and not a copy of the detailed acceptance criteria. Plain text without numbering or bullets.",
             "type": "array",
             "minItems": 1,
+            "maxItems": 1,
             "uniqueItems": true,
             "items": {
               "type": "string",
               "minLength": 1,
               "pattern": "\\S"
             }
+          },
+          "detailed": {
+            "description": "The DETAILED story written into stories/detailed_stories.md. The required fields are always rendered; an empty optional field is left out so the file stays lean.",
+            "type": "object",
+            "properties": {
+              "description": {
+                "description": "The user need in the 'As a [user], I want [capability], so that [benefit].' form. Plain paragraphs separated by a blank line.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "preconditions": {
+                "description": "What must be true before the story applies. Empty when the requirements state none.",
+                "$ref": "#/$defs/textList"
+              },
+              "functional_behaviour": {
+                "description": "The detailed functional behaviour the system must provide.",
+                "$ref": "#/$defs/textList",
+                "minItems": 1
+              },
+              "business_rules": {
+                "description": "The business rules, limits and constraints that apply, with the exact values. Empty when none are stated.",
+                "$ref": "#/$defs/textList"
+              },
+              "acceptance_criteria": {
+                "description": "Complete, independently testable acceptance criteria in plain text (one sentence of condition and expected outcome each, not Given/When/Then) covering every supported rule, validation, alternate and error flow, boundary and security condition. Without numbering; numbering is added when the story is written.",
+                "$ref": "#/$defs/textList",
+                "minItems": 1
+              },
+              "scenarios": {
+                "description": "Alternate or error flow notes that no acceptance criterion already states. Normally empty; an empty optional field is left out of the detailed stories file.",
+                "$ref": "#/$defs/textList"
+              },
+              "non_functional_requirements": {
+                "description": "Applicable non-functional requirements and quality attributes (performance, security, availability, accessibility, audit and so on) with their measurable targets. Empty when the requirements state none.",
+                "$ref": "#/$defs/textList"
+              },
+              "dependencies": {
+                "description": "What this story depends on: other stories, systems, data, roles or decisions. A dependency on another story is written '[[Exact summary of that story]]: what is needed' and is saved with that story's Story ID ('US-001 (Summary): ...'); an existing story may be named by its ID. Empty when none are known.",
+                "$ref": "#/$defs/textList"
+              }
+            },
+            "required": ["description", "functional_behaviour", "acceptance_criteria"],
+            "additionalProperties": false
+          },
+          "lean_reviewed": {
+            "description": "True when this run derived the lean story from the detailed story, or confirmed that the existing lean story is still current. Clears the 'needs updating' flag the state keeps after a detailed story was edited.",
+            "type": "boolean"
           },
           "source_requirement_ids": {
             "description": "Atomic requirements this story is built from. Stored in the internal state only.",
@@ -57,7 +101,7 @@
             }
           }
         },
-        "required": ["summary", "description", "acceptance_criteria", "source_requirement_ids"],
+        "required": ["summary", "lean_acceptance_criteria", "detailed", "source_requirement_ids"],
         "additionalProperties": false
       }
     },
@@ -102,5 +146,16 @@
     }
   },
   "required": ["stories"],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "textList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    }
+  }
 }

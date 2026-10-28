@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Shared helpers for the Phase 3 story scripts (ba-requirements plugin).
 
-Markdown section handling (locate, parse, render, hash), project paths, safe file
-writes, and loading of the Phase 1 / Phase 2 inputs and the story state.
+Markdown section handling (locate, parse, render, hash) for the ultra-lean stories in the
+requirements document and for the consolidated stories/detailed_stories.md, project paths,
+safe file writes, and loading of the Phase 1 / Phase 2 inputs and the story state.
 Standard library only. This is a library, not a command: validate-development-stories.py,
 sync-development-stories.py and generate-phase3-report.py import it.
 """
@@ -14,16 +15,17 @@ import os
 import re
 import sys
 import tempfile
-import textwrap
 from datetime import datetime
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SECTION_TITLE = "Development Stories"
-STATE_SCHEMA_VERSION = "1.0"
+DETAILED_FILENAME = "detailed_stories.md"
+DETAILED_RELATIVE = "stories/detailed_stories.md"
+STATE_SCHEMA_VERSION = "2.0"
+SUPPORTED_STATE_VERSIONS = ("2.0",)
 STORY_ID_RE = re.compile(r"^US-([0-9]{3,})$")
 REQ_ID_RE = re.compile(r"^REQ-([0-9]{3,})$")
 GAP_ID_RE = re.compile(r"^GAP-([0-9]{3,})$")
-WRAP_WIDTH = 76
 
 
 def load_script(filename, name):
@@ -65,9 +67,13 @@ class Paths:
         self.register = os.path.join(self.gaps_dir, "gaps.json")
         self.stories_dir = os.path.join(self.root, "stories")
         self.state = os.path.join(self.stories_dir, "story-generation-state.json")
+        self.detailed_file = os.path.join(self.stories_dir, DETAILED_FILENAME)
         self.backups = os.path.join(self.stories_dir, "backups")
         self.report_dir = os.path.join(self.root, "report")
         self.report = os.path.join(self.report_dir, "phase3-report.html")
+        # Left by earlier plugin versions; reported, never read or written.
+        self.legacy_detailed_dir = os.path.join(self.stories_dir, "detailed")
+        self.legacy_lean_file = os.path.join(self.stories_dir, "lean-stories.md")
 
 
 def now_stamp():
@@ -158,29 +164,6 @@ def canonical_description(text):
     if current:
         paragraphs.append(collapse(" ".join(current)))
     return "\n\n".join(paragraphs)
-
-
-def canonical_story(story):
-    return {
-        "summary": collapse(story["summary"]),
-        "description": canonical_description(story["description"]),
-        "acceptance_criteria": [collapse(item) for item in story["acceptance_criteria"]],
-    }
-
-
-def content_hash(story):
-    """Hash of the story's content only (not its ID), so a renamed story keeps its content hash."""
-    c = canonical_story(story)
-    return sha256_text(json.dumps([c["summary"], c["description"], c["acceptance_criteria"]], ensure_ascii=False))
-
-
-def field_hashes(story):
-    c = canonical_story(story)
-    return {
-        "summary": sha256_text(c["summary"]),
-        "description": sha256_text(c["description"]),
-        "acceptance_criteria": [sha256_text(item) for item in c["acceptance_criteria"]],
-    }
 
 
 def section_hash(section_text):
@@ -335,14 +318,66 @@ def locate_section(text):
 
 
 # ------------------------------------------------------------- story parsing and rendering
+#
+# A story exists in two representations that share one stable Story ID and one Summary:
+#
+#   * the ultra-lean story in the requirements document: Story ID, Summary, high-level functional
+#     acceptance criteria (parse_section / render_lean);
+#   * the detailed story in the single file stories/detailed_stories.md: the full functional and
+#     non-functional detail (parse_detailed_document / render_detailed).
+#
+# Both start with the same heading, "## US-001 — Summary". Mappings and hashes live in the state.
 
+HEADING_SEPARATOR = " — "
+_STORY_HEADING_RE = re.compile(r"^(US-[0-9]+)(?:[ \t]*(?:—|–|-|:)[ \t]*(.*))?$")
 _LABEL_RE = re.compile(r"^\*\*([^*\n]+?):\*\*[ \t]*(.*)$")
 _ITEM_RE = re.compile(r"^ ?(?:[0-9]{1,4}[.)]|[-*+])[ \t]+(.*)$")
-FIELD_LABELS = {"Summary": "summary", "Detailed Description": "description", "Acceptance Criteria": "criteria"}
-FIELD_ORDER = ("summary", "description", "criteria")
+NOT_SPECIFIED = "Not specified."
+
+# Field specifications: (key, label, kind, required). "text" is one or more paragraphs, "list" a bullet
+# list, "numbered" a numbered list, "statement" one inline statement (a bullet list written by an earlier
+# plugin version is still read, as several items). The order is the order in the file.
+LEAN_FIELDS = (("acceptance_criteria", "Acceptance Criteria", "statement", True),)
+LEGACY_FIELDS = (
+    ("summary", "Summary", "text", True),
+    ("description", "Detailed Description", "text", True),
+    ("acceptance_criteria", "Acceptance Criteria", "numbered", True),
+)
+DETAILED_FIELDS = (
+    ("description", "Description", "text", True),
+    ("preconditions", "Preconditions", "list", False),
+    ("functional_behaviour", "Functional Behaviour", "list", True),
+    ("business_rules", "Business Rules", "list", False),
+    ("acceptance_criteria", "Acceptance Criteria", "numbered", True),
+    ("scenarios", "Alternate and Error Scenarios", "list", False),
+    ("non_functional_requirements", "Non-Functional Requirements", "list", False),
+    ("dependencies", "Dependencies", "list", False),
+)
+DETAILED_KEYS = tuple(spec[0] for spec in DETAILED_FIELDS)
+DETAILED_LIST_KEYS = tuple(spec[0] for spec in DETAILED_FIELDS if spec[2] != "text")
+DETAILED_REQUIRED = tuple(spec[0] for spec in DETAILED_FIELDS if spec[3])
+LEGACY_LABELS = ("Summary", "Detailed Description")
+DETAILED_TITLE = "Detailed Stories"
+DETAILED_NOTE = (
+    "<!-- Maintained by the sdlc-pipeline plugin (BA requirements analysis). Each story has the same Story ID and summary as its "
+    "entry in the Development Stories section of the requirements document. -->"
+)
 
 
-def _parse_criteria(lines, problems, where):
+def split_story_heading(title):
+    """Split the text of a '## ' heading into (story_id, summary or None). A heading that is not a story heading is returned whole."""
+    match = _STORY_HEADING_RE.match(title.strip())
+    if not match:
+        return title.strip(), None
+    summary = collapse(match.group(2) or "")
+    return match.group(1), summary or None
+
+
+def story_heading(story_id, summary):
+    return f"## {story_id}{HEADING_SEPARATOR}{collapse(summary)}"
+
+
+def _parse_items(lines, problems, where, label):
     items = []
     current = None
     after_blank = False
@@ -357,22 +392,23 @@ def _parse_criteria(lines, problems, where):
         elif current is not None and (body[:1] in (" ", "\t") or not after_blank):
             current.append(body.strip())
         else:
-            problems.append(f"{where}: text outside a numbered acceptance criterion: {body.strip()[:60]!r}.")
+            problems.append(f"{where}: text outside a list item in {label}: {body.strip()[:60]!r}.")
         after_blank = False
-    criteria = []
+    parsed = []
     for item in items:
         text = collapse(" ".join(item))
         if not text:
-            problems.append(f"{where}: an acceptance criterion is empty.")
+            problems.append(f"{where}: an item in {label} is empty.")
         else:
-            criteria.append(text)
-    return criteria
+            parsed.append(text)
+    return parsed
 
 
-def _parse_block(block, problems):
-    story_id = block["story_id"]
-    where = f"{story_id} (line {block['line']})"
-    buckets = {"summary": [], "description": [], "criteria": []}
+def _read_fields(block, specs, problems, where, hint):
+    """Split a story block into its labelled fields. Returns (buckets, seen_keys)."""
+    labels = {label: key for key, label, _, _ in specs}
+    order = [key for key, _, _, _ in specs]
+    buckets = {key: [] for key in order}
     seen = []
     field = None
     for body, masked in block["body"]:
@@ -380,18 +416,15 @@ def _parse_block(block, problems):
             match = _LABEL_RE.match(body)
             if match:
                 label = match.group(1).strip()
-                key = FIELD_LABELS.get(label)
+                key = labels.get(label)
                 if key is None:
-                    problems.append(
-                        f"{where}: extra story field '{label}'. A story holds only Summary, Detailed Description and "
-                        "Acceptance Criteria; traceability lives in stories/story-generation-state.json."
-                    )
+                    problems.append(f"{where}: extra story field '{label}'. {hint}")
                     field = "ignored"
                     continue
                 if key in seen:
                     problems.append(f"{where}: the '{label}' field appears more than once.")
-                elif seen and FIELD_ORDER.index(key) < FIELD_ORDER.index(seen[-1]):
-                    problems.append(f"{where}: '{label}' is out of order (Summary, Detailed Description, Acceptance Criteria).")
+                elif seen and order.index(key) < order.index(seen[-1]):
+                    problems.append(f"{where}: '{label}' is out of order ({', '.join(spec[1] for spec in specs)}).")
                 seen.append(key)
                 field = key
                 if match.group(2).strip():
@@ -399,55 +432,77 @@ def _parse_block(block, problems):
                 continue
         if field is None:
             if body.strip():
-                problems.append(f"{where}: text before the Summary field: {body.strip()[:60]!r}.")
+                problems.append(f"{where}: text before the first field: {body.strip()[:60]!r}.")
         elif field != "ignored":
             buckets[field].append(body)
-    for key, label in (("summary", "Summary"), ("description", "Detailed Description"), ("criteria", "Acceptance Criteria")):
-        if key not in seen:
+    return buckets, seen
+
+
+def _field_values(specs, buckets, seen, problems, where):
+    values = {}
+    for key, label, kind, required in specs:
+        if kind == "text":
+            value = canonical_description("\n".join(buckets[key]))
+            empty = not value
+        elif kind == "statement" and not any(_ITEM_RE.match(line) for line in buckets[key]):
+            statement = collapse(" ".join(buckets[key]))
+            value = [statement] if statement else []
+            empty = not value
+        elif collapse(" ".join(buckets[key])).casefold() == NOT_SPECIFIED.casefold():
+            value = []
+            empty = True
+        else:
+            value = _parse_items(buckets[key], problems, where, f"'{label}'")
+            empty = not value
+        values[key] = value
+        if required and key not in seen:
             problems.append(f"{where}: the '{label}' field is missing.")
-    summary = collapse(" ".join(buckets["summary"]))
-    description = canonical_description("\n".join(buckets["description"]))
-    criteria = _parse_criteria(buckets["criteria"], problems, where)
-    if "summary" in seen and not summary:
-        problems.append(f"{where}: the Summary is empty.")
-    if "description" in seen and not description:
-        problems.append(f"{where}: the Detailed Description is empty.")
-    if "criteria" in seen and not criteria:
-        problems.append(f"{where}: there is no acceptance criterion.")
-    raw_lines = [block["heading_line"]] + [body_line for body_line in block["raw_body"]]
+        elif required and empty:
+            problems.append(f"{where}: the '{label}' field is empty.")
+    return values
+
+
+def _raw_block(block):
+    raw_lines = [block["heading_line"]] + list(block["raw_body"])
     while raw_lines and not strip_eol(raw_lines[-1]).strip():
         raw_lines.pop()
-    return {
-        "story_id": story_id,
-        "summary": summary,
-        "description": description,
-        "acceptance_criteria": criteria,
-        "line": block["line"],
-        "raw": normalise_eol("".join(raw_lines)).rstrip("\n"),
-    }
+    return normalise_eol("".join(raw_lines)).rstrip("\n")
 
 
-def parse_section(section_text, base_line=1):
-    """Parse the managed section. Returns (stories, problems); problems are human-readable strings."""
-    lines = split_lines(section_text)
-    problems = []
+def _collect_blocks(lines, base_line, problems, kind):
+    """Split a document into story blocks at its '## ' headings. kind is 'lean' or 'detailed'."""
+    where = "inside the Development Stories section" if kind == "lean" else "in the detailed stories file"
     blocks = []
     current = None
+    title_seen = False
+    in_comment = False
     for index, offset, line, masked in iter_structure(lines):
         body = strip_eol(line)
         line_no = base_line + index
-        if index == 0:
+        if kind == "lean" and index == 0:
             continue
+        if current is None:
+            # An HTML comment before the first story (the file's maintenance note) is not content.
+            if in_comment:
+                in_comment = "-->" not in body
+                continue
+            if body.lstrip().startswith("<!--"):
+                in_comment = "-->" not in body
+                continue
         heading = None if masked else heading_of(body)
         if heading:
             level, title = heading
             if level == 2:
-                if not STORY_ID_RE.match(title):
-                    problems.append(f"line {line_no}: the heading '## {title}' is not a valid story ID (expected US-001 style).")
-                current = {"story_id": title, "line": line_no, "heading_line": line, "body": [], "raw_body": []}
+                story_id, summary = split_story_heading(title)
+                if not STORY_ID_RE.match(story_id):
+                    problems.append(f"line {line_no}: the heading '## {title}' is not a valid story heading (expected '## US-001{HEADING_SEPARATOR}Short summary').")
+                current = {"story_id": story_id, "summary": summary, "line": line_no, "heading_line": line, "body": [], "raw_body": []}
                 blocks.append(current)
                 continue
-            problems.append(f"line {line_no}: unexpected heading '{'#' * level} {title}' inside the Development Stories section.")
+            if kind == "detailed" and level == 1 and not blocks and not title_seen:
+                title_seen = True
+                continue
+            problems.append(f"line {line_no}: unexpected heading '{'#' * level} {title}' {where}.")
             if current is not None:
                 current["body"].append((body, masked))
                 current["raw_body"].append(line)
@@ -458,42 +513,280 @@ def parse_section(section_text, base_line=1):
             continue
         current["body"].append((body, masked))
         current["raw_body"].append(line)
-    stories = []
+    return blocks
+
+
+def _check_unique(stories, blocks, problems):
     seen_ids = {}
-    for block in blocks:
-        story = _parse_block(block, problems)
+    for story, block in zip(stories, blocks):
         if story["story_id"] in seen_ids:
             problems.append(f"{story['story_id']} (line {block['line']}): duplicate story ID (first on line {seen_ids[story['story_id']]}).")
         else:
             seen_ids[story["story_id"]] = block["line"]
-        stories.append(story)
+
+
+def _parse_lean_block(block, problems):
+    story_id = block["story_id"]
+    where = f"{story_id} (line {block['line']})"
+    legacy = any(
+        (match := _LABEL_RE.match(body)) and match.group(1).strip() in LEGACY_LABELS
+        for body, masked in block["body"] if not masked
+    )
+    summary = block["summary"] or ""
+    if legacy:
+        buckets, seen = _read_fields(block, LEGACY_FIELDS, [], where, "")
+        legacy_problems = []
+        values = _field_values(LEGACY_FIELDS, buckets, seen, legacy_problems, where)
+        story = {"story_id": story_id, "summary": collapse(values["summary"]), "acceptance_criteria": values["acceptance_criteria"], "legacy": True}
+    else:
+        buckets, seen = _read_fields(
+            block, LEAN_FIELDS, problems, where,
+            "A story in the requirements document holds only the Story ID, the short summary in its heading and the Acceptance Criteria; "
+            "detail lives in stories/detailed_stories.md and traceability in stories/story-generation-state.json.",
+        )
+        values = _field_values(LEAN_FIELDS, buckets, seen, problems, where)
+        if not summary:
+            problems.append(f"{where}: the heading has no short summary (expected '## {story_id}{HEADING_SEPARATOR}Short summary').")
+        story = {"story_id": story_id, "summary": summary, "acceptance_criteria": values["acceptance_criteria"]}
+    story.update(line=block["line"], raw=_raw_block(block))
+    return story
+
+
+def parse_section(section_text, base_line=1):
+    """Parse the managed section. Returns (stories, problems); problems are human-readable strings."""
+    lines = split_lines(section_text)
+    problems = []
+    blocks = _collect_blocks(lines, base_line, problems, "lean")
+    stories = [_parse_lean_block(block, problems) for block in blocks]
+    _check_unique(stories, blocks, problems)
     return stories, problems
 
 
-def _wrap(text, initial="", subsequent=""):
-    return textwrap.fill(
-        text, width=WRAP_WIDTH, initial_indent=initial, subsequent_indent=subsequent,
-        break_long_words=False, break_on_hyphens=False,
+def _parse_detailed_block(block, problems):
+    story_id = block["story_id"]
+    where = f"{story_id} (line {block['line']})"
+    buckets, seen = _read_fields(
+        block, DETAILED_FIELDS, problems, where,
+        "A detailed story holds only: " + ", ".join(spec[1] for spec in DETAILED_FIELDS) + "; traceability lives in stories/story-generation-state.json.",
     )
+    values = _field_values(DETAILED_FIELDS, buckets, seen, problems, where)
+    if not block["summary"]:
+        problems.append(f"{where}: the heading has no short summary (expected '## {story_id}{HEADING_SEPARATOR}Short summary').")
+    story = {"story_id": story_id, "summary": block["summary"] or "", **values}
+    story.update(line=block["line"], raw=_raw_block(block))
+    return story
 
 
-def render_story(story):
-    c = canonical_story(story)
-    out = [f"## {story['story_id']}", "", f"**Summary:** {c['summary']}", "", "**Detailed Description:**"]
-    for position, paragraph in enumerate(c["description"].split("\n\n")):
-        if position:
-            out.append("")
-        out.append(_wrap(paragraph))
-    out += ["", "**Acceptance Criteria:**", ""]
-    for number, criterion in enumerate(c["acceptance_criteria"], start=1):
-        prefix = f"{number}. "
-        out.append(_wrap(criterion, prefix, " " * len(prefix)))
-        out.append("")
-    return "\n".join(out[:-1])
+def parse_detailed_document(text):
+    """Parse the consolidated detailed stories file. Returns (stories in file order, problems)."""
+    lines = split_lines(normalise_eol(text.lstrip("﻿")))
+    problems = []
+    blocks = _collect_blocks(lines, 1, problems, "detailed")
+    stories = [_parse_detailed_block(block, problems) for block in blocks]
+    _check_unique(stories, blocks, problems)
+    return stories, problems
+
+
+# --------------------------------------------------- canonical forms, hashes and rendering
+
+
+def canonical_lean(story):
+    return {"summary": collapse(story["summary"]), "acceptance_criteria": [collapse(item) for item in story["acceptance_criteria"]]}
+
+
+def canonical_detailed(story):
+    out = {"summary": collapse(story["summary"]), "description": canonical_description(story["description"])}
+    for key in DETAILED_LIST_KEYS:
+        out[key] = [collapse(item) for item in story.get(key) or []]
+    return out
+
+
+def lean_hash(story):
+    """Hash of the lean story's content only (not its ID), so a renamed story keeps its hash."""
+    c = canonical_lean(story)
+    return sha256_text(json.dumps([c["summary"], c["acceptance_criteria"]], ensure_ascii=False))
+
+
+def detailed_hash(story):
+    c = canonical_detailed(story)
+    return sha256_text(json.dumps([c["summary"], c["description"]] + [c[key] for key in DETAILED_LIST_KEYS], ensure_ascii=False))
+
+
+def lean_field_hashes(story):
+    c = canonical_lean(story)
+    return {"summary": sha256_text(c["summary"]), "acceptance_criteria": [sha256_text(item) for item in c["acceptance_criteria"]]}
+
+
+def render_lean(story):
+    """A story of the requirements document: the heading and the acceptance criteria as one statement."""
+    c = canonical_lean(story)
+    return "\n".join([story_heading(story["story_id"], c["summary"]), "", f"**Acceptance Criteria:** {' '.join(c['acceptance_criteria'])}"])
 
 
 def render_section(blocks):
     return f"# {SECTION_TITLE}\n\n" + "\n\n".join(blocks) + "\n"
+
+
+def render_detailed(story):
+    """A story of stories/detailed_stories.md. The required fields are always present; an optional field with nothing to say is left out."""
+    c = canonical_detailed(story)
+    out = [story_heading(story["story_id"], c["summary"]), ""]
+    for key, label, kind, required in DETAILED_FIELDS:
+        if not required and not c[key]:
+            continue
+        out.append(f"**{label}:**")
+        if kind == "text":
+            out.append(c[key])
+        elif kind == "numbered":
+            out += [f"{number}. {item}" for number, item in enumerate(c[key], start=1)]
+        else:
+            out += [f"- {item}" for item in c[key]]
+        out.append("")
+    return "\n".join(out[:-1])
+
+
+# A dependency on another story is written in a draft as [[Summary of that story]]; it is replaced by the
+# story's ID once every story of the draft has one (a new story is only given its ID when the draft is applied).
+STORY_REF_RE = re.compile(r"\[\[([^\[\]\n]+)\]\]")
+STORY_ID_IN_TEXT_RE = re.compile(r"\bUS-[0-9]{3,}\b")
+
+
+def story_reference_key(summary):
+    return collapse(summary).casefold()
+
+
+def resolve_story_references(items, ids_by_summary):
+    """Replace every [[Summary]] in the items by 'US-001 (Summary)'. A reference that matches no story is left as it is."""
+    def replace(match):
+        found = ids_by_summary.get(story_reference_key(match.group(1)))
+        return f"{found[0]} ({found[1]})" if found else match.group(0)
+    return [STORY_REF_RE.sub(replace, item) for item in items]
+
+
+def render_detailed_document(blocks):
+    return f"# {DETAILED_TITLE}\n\n{DETAILED_NOTE}\n\n" + "\n\n".join(blocks) + "\n"
+
+
+# --------------------------------------------------- lean and detailed views of a draft item
+#
+# A draft story (schemas/development-stories.schema.json) carries both representations.
+
+
+def lean_view(item):
+    """The ultra-lean story of a draft item: summary and the one acceptance-criteria statement."""
+    return {"story_id": item.get("story_id"), "summary": item["summary"], "acceptance_criteria": list(item["lean_acceptance_criteria"])}
+
+
+def detailed_view(item):
+    """The detailed story of a draft item."""
+    detail = item["detailed"]
+    view = {"story_id": item.get("story_id"), "summary": item["summary"], "description": detail["description"]}
+    for key in DETAILED_LIST_KEYS:
+        view[key] = list(detail.get(key) or [])
+    return view
+
+
+def draft_item(lean, detailed):
+    """Build a draft story from a story of the document and its detailed story (used by export)."""
+    item = {"story_id": lean["story_id"], "summary": lean["summary"], "lean_acceptance_criteria": list(lean["acceptance_criteria"])}
+    item["detailed"] = {key: (detailed[key] if key == "description" else list(detailed[key])) for key in DETAILED_KEYS}
+    return item
+
+
+# ------------------------------------------------------------ the detailed stories file
+
+
+class DetailedFile:
+    """stories/detailed_stories.md, read once: its stories (by ID and in file order), problems and hashes."""
+
+    def __init__(self, path, raw):
+        self.path = path
+        self.exists = raw is not None
+        self.raw = raw
+        self.stories = {}
+        self.order = []
+        self.raw_blocks = {}
+        self.problems = []
+        self.text = ""
+        if raw is None:
+            return
+        try:
+            self.text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            self.problems.append(f"stories/detailed_stories.md is not valid UTF-8 ({exc}).")
+            return
+        stories, self.problems = parse_detailed_document(self.text)
+        for story in stories:
+            if story["story_id"] in self.stories:
+                continue
+            self.stories[story["story_id"]] = story
+            self.order.append(story["story_id"])
+            self.raw_blocks[story["story_id"]] = story["raw"]
+
+    @property
+    def file_hash(self):
+        if not self.exists:
+            return None
+        return sha256_text(normalise_eol(self.text).rstrip() + "\n")
+
+
+def scan_detailed(paths):
+    """Read stories/detailed_stories.md. Returns a DetailedFile (exists False when the file is absent)."""
+    try:
+        raw = read_bytes(paths.detailed_file) if os.path.isfile(paths.detailed_file) else None
+    except IOFailure as exc:
+        detailed = DetailedFile(paths.detailed_file, None)
+        detailed.problems.append(str(exc))
+        return detailed
+    return DetailedFile(paths.detailed_file, raw)
+
+
+def scan_legacy_files(paths):
+    """Per-story files and mirrors left by earlier plugin versions. They are never read or written any more."""
+    found = []
+    if os.path.isdir(paths.legacy_detailed_dir):
+        found.append("stories/detailed/")
+    if os.path.isfile(paths.legacy_lean_file):
+        found.append("stories/lean-stories.md")
+    try:
+        found += sorted(f"stories/{name}" for name in os.listdir(paths.stories_dir) if re.fullmatch(r"US-[0-9]{3,}\.md", name))
+    except OSError:
+        pass
+    return found
+
+
+def pair_status(doc_stories, detailed, state):
+    """How the lean (document) and detailed versions relate to each other and to the last synchronised state.
+
+    detailed: {story_id: detailed story} (DetailedFile.stories)."""
+    status = {"detailed_missing": [], "detailed_extra": [], "lean_edited": [], "detailed_edited": [],
+              "detailed_untracked": [], "lean_stale": []}
+    doc_ids = {s["story_id"] for s in doc_stories}
+    status["detailed_missing"] = sorted((i for i in doc_ids if i not in detailed), key=story_number)
+    status["detailed_extra"] = sorted((i for i in detailed if i not in doc_ids), key=story_number)
+    if not state:
+        return status
+    entries = {e["story_id"]: e for e in state["stories"]}
+    for story in doc_stories:
+        story_id = story["story_id"]
+        entry = entries.get(story_id)
+        if entry is None:
+            continue
+        if lean_hash(story) != entry["story_content_hash"]:
+            status["lean_edited"].append(story_id)
+        full = detailed.get(story_id)
+        known = entry.get("detailed_content_hash")
+        if full is None:
+            continue
+        if known is None:
+            status["detailed_untracked"].append(story_id)
+            continue
+        if detailed_hash(full) != known:
+            status["detailed_edited"].append(story_id)
+        if entry.get("lean_derived_from") != known:
+            status["lean_stale"].append(story_id)
+    status["lean_stale"] = sorted(set(status["lean_stale"]) | set(status["detailed_edited"]), key=story_number)
+    return status
 
 
 # ------------------------------------------------------------------------ document model
@@ -514,6 +807,7 @@ class Document:
         self.section = ""
         self.stories = []
         self.problems = []
+        self.legacy_ids = []
         try:
             located = locate_section(self.text)
         except SectionAmbiguous as exc:
@@ -525,6 +819,7 @@ class Document:
             self.prefix = located["prefix"]
             self.section = located["section"]
             self.stories, self.problems = parse_section(self.section, located["line"])
+            self.legacy_ids = [story["story_id"] for story in self.stories if story.get("legacy")]
 
     @property
     def outside_hash(self):
@@ -645,8 +940,11 @@ def check_state(state):
             errors.append(f"missing property: {key}.")
     if errors:
         return errors
-    if state["schema_version"] != STATE_SCHEMA_VERSION:
-        errors.append(f"unsupported schema_version {state['schema_version']!r} (expected {STATE_SCHEMA_VERSION}).")
+    if state["schema_version"] not in SUPPORTED_STATE_VERSIONS:
+        errors.append(
+            f"unsupported schema_version {state['schema_version']!r} (expected {STATE_SCHEMA_VERSION}); "
+            "the state was written by an earlier plugin version and is not used."
+        )
     for key in ("target_document", "source_document_hash", "managed_section_hash", "atomic_requirements_hash"):
         if not isinstance(state[key], str) or not state[key].strip():
             errors.append(f"'{key}' must be a non-empty string.")
@@ -668,9 +966,15 @@ def check_state(state):
             seen.add(story_id)
         if not isinstance(entry.get("story_content_hash"), str):
             errors.append(f"{label}: story_content_hash must be a string.")
+        for key in ("detailed_content_hash", "lean_derived_from"):
+            if entry.get(key) is not None and not isinstance(entry[key], str):
+                errors.append(f"{label}: '{key}' must be a string when present.")
         for key in ("source_requirement_ids", "related_gap_ids", "applied_decisions"):
             if not isinstance(entry.get(key, []), list):
                 errors.append(f"{label}: '{key}' must be an array.")
+    for key in ("detailed_document", "detailed_document_hash"):
+        if state.get(key) is not None and not isinstance(state[key], str):
+            errors.append(f"'{key}' must be a string when present.")
     for key in ("requirement_snapshot", "gap_snapshot", "decision_ledger"):
         if not isinstance(state.get(key, {}), dict):
             errors.append(f"'{key}' must be an object.")

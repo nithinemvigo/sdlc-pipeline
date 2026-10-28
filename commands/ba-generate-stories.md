@@ -1,5 +1,5 @@
 ---
-description: Generate development stories from the atomic requirements and write them into the original requirements document (BA Requirements, Phase 3)
+description: Generate development stories from the atomic requirements: detailed functional and non-functional stories in stories/detailed_stories.md and ultra-lean stories in the original requirements document (BA Requirements, Phase 3)
 allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), Bash(python3:*), Bash(py:*)
 ---
 
@@ -10,7 +10,7 @@ You orchestrate this command. Methodology lives in the plugin's agent, skills an
 Plugin root: `${CLAUDE_PLUGIN_ROOT}`
 Artifact root: the `--artifact-root` given in the arguments, otherwise the current working directory of this session. Every `<project root>` below means the artifact root, and is passed to the scripts as `--project-root <artifact root>` (`<project-root>` in rules and skills means the same).
 
-Stories are generated from the requirements known now, even when gaps are open or skipped. Never decide an open gap. Do not touch the atomic requirements or the gap register. Do not hand-edit the requirements document, `stories/story-generation-state.json` or `report/phase3-report.html`: every read and write goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works; if none does, tell the user Python 3 is required and ask before doing anything else.
+Stories are generated from the requirements known now, even when gaps are open or skipped. Never decide an open gap. Do not touch the atomic requirements or the gap register. Every story is saved twice under one Story ID: the detailed story in the single consolidated file `stories/detailed_stories.md` (authoritative, the source of the HTML report; never one file per story) and the ultra-lean story (Story ID, concise summary, one functional acceptance-criteria statement) in the requirements document's `# Development Stories` section. Do not hand-edit the requirements document, `stories/detailed_stories.md`, `stories/story-generation-state.json` or `report/phase3-report.html`: every read and write goes through `scripts/sync-development-stories.py`. Use whichever of `python`, `python3`, `py` works; if none does, tell the user Python 3 is required and ask before doing anything else.
 
 ## Step 1 — Load the standards
 
@@ -46,8 +46,9 @@ Act on `status`:
 Then check:
 
 - `gaps.status`: `MISSING` — continue, and say that gap traceability is unavailable. `INVALID` — show `gaps.errors` and ask with AskUserQuestion: the user corrects the register (stop), or explicitly proceeds without gap context (add `--ignore-gaps` to every script call below and never claim gap relationships were checked).
-- `section.problems` not empty: the managed section was edited into an invalid shape. Show the problems, tell the user to fix them in the document or run `/sdlc-pipeline:ba-sync-stories`, and stop.
-- `manual_changes`: if stories were edited, added or deleted by hand, tell the user they will be preserved and that anything the new draft would change in them is asked about first.
+- `section.problems` or `detailed.problems` not empty: the Development Stories section or `stories/detailed_stories.md` was edited into an invalid shape. Show the problems, tell the user to fix them in the document or the file, or run `/sdlc-pipeline:ba-sync-stories`, and stop.
+- `manual_changes` and `detailed`: if document stories or detailed stories were edited, added or deleted by hand (`detailed.edited`, `detailed.deleted_by_hand`, `manual_changes.edited`), tell the user they will be preserved and that anything the new draft would change in them is asked about first. `detailed.lean_needs_update` lists stories whose detailed story changed after the ultra-lean story was written; their ultra-lean story is brought up to date in this run once the user agrees.
+- `detailed.missing` not empty and the section exists, or `section.legacy_layout_story_ids` not empty, or `detailed.legacy_files` not empty: the project was created by an earlier plugin version or the stories were added by hand. The detailed stories are written in this run from the atomic requirements and confirmed decisions, and each existing entry is rewritten in the ultra-lean form (mode `reconcile`; `apply --overwrite` for the old entries after the user agrees; IDs are kept and the replaced document is backed up). Say so, and list the old files in `detailed.legacy_files`: they are no longer used and the user may remove them once nothing is missing.
 - `state.status` `INVALID`: say the story state is unusable. Existing stories will not be overwritten without your consent.
 
 Keep `target.source_sha256` from this output.
@@ -67,7 +68,7 @@ Stories are traced to requirement IDs, so requirements from all analysed files s
 ## Step 4 — Decide what there is to do
 
 - **No section yet** (`section.state` `absent`): mode `generate`.
-- **Section exists:** mode `reconcile`. Run `export --project-root <root> --draft-out <temp>/existing.json` (add `--target` if needed). If `uncovered_requirements` is empty, `requirement_changes` shows no added, changed or removed requirements, and no story is flagged, report that the stories already cover the requirements and nothing was changed, run `regenerate-report` so the report is current, and stop. Do not generate a second section or new IDs for existing stories.
+- **Section exists:** mode `reconcile`. Run `export --project-root <root> --draft-out <temp>/existing.json` (add `--target` if needed). If `uncovered_requirements` is empty, `requirement_changes` shows no added, changed or removed requirements, `detailed.missing` and `detailed.lean_needs_update` are empty, no story is in the old layout and no story is flagged, report that the stories already cover the requirements and nothing was changed, run `regenerate-report` so the report is current, and stop. Do not generate a second section or new IDs for existing stories.
 - If `requirement_changes` lists removed or changed requirements, show them with `affected_story_ids` to the user and say what the draft will do about each; a story is never deleted for a removed requirement without the user's approval.
 
 Create a temporary directory outside the project and the plugin:
@@ -78,7 +79,7 @@ python -c "import tempfile; print(tempfile.mkdtemp(prefix='ba-stories-'))"
 
 ## Step 5 — Run the Story Generation Agent
 
-Invoke the `sdlc-pipeline:story-generation-agent` agent. Its prompt must include: the plugin root, the artifact root (passed as `--project-root` to every script), the mode, the atomic requirements path, the gap register path (or "none/ignored"), the draft path `<temp>/draft.json`, for `reconcile` the export path and the relevant `inspect` findings (added, changed, removed requirements; uncovered requirements; stories edited by hand), and the instruction to follow its files and return its final report format.
+Invoke the `sdlc-pipeline:story-generation-agent` agent. Its prompt must include: the plugin root, the artifact root (passed as `--project-root` to every script), the mode, the atomic requirements path, the gap register path (or "none/ignored"), the draft path `<temp>/draft.json`, for `reconcile` the export path and the relevant `inspect` findings (added, changed, removed requirements; uncovered requirements; document or detailed stories edited by hand; stories with no detailed story or in the old layout; stories whose ultra-lean version needs updating), and the instruction to write each story as a detailed story plus a derived ultra-lean version, to follow its files and return its final report format.
 
 If it reports `INCOMPLETE` or a failed validator, re-invoke it with the specific problem or tell the user what is missing. If it reports `NEEDS_DECISION` or `NEW_STORY_PROPOSALS`, put each question to the user with AskUserQuestion, then re-invoke with the answers.
 
@@ -92,7 +93,7 @@ Do not rely on the agent's word:
 python ${CLAUDE_PLUGIN_ROOT}/scripts/validate-development-stories.py <temp>/draft.json --project-root <project root>
 ```
 
-On failure send the errors back to the agent. Then read the draft and spot-check: coherent stories (not one per requirement by rote), testable criteria, no open or skipped gap turned into a decision, every confirmed decision accurately reflected, no metadata in any story.
+On failure send the errors back to the agent. Then read the draft and spot-check both versions of several stories: coherent stories (not one per requirement by rote); a concise 3-7 word summary; a lean detailed story with complete functional behaviour, business rules, plain-text testable criteria (no Given/When/Then), the applicable non-functional requirements, and dependencies on other stories that name the Story ID; ultra-lean criteria that are one short, high-level statement of the primary functional outcome (no bullets, Given/When/Then, detailed conditions, scenarios, implementation notes or non-functional criteria, and not a copy of the detailed criteria) and agree with the detailed story; the detailed story omits no confirmed functional rule; no open or skipped gap turned into a decision; every confirmed decision accurately reflected in the detailed story and, where it changes the primary functional outcome, in the ultra-lean story; no metadata in any story. Show any `WARNING` lines to the agent.
 
 ## Step 7 — Preview, then write
 
@@ -100,13 +101,13 @@ On failure send the errors back to the agent. Then read the draft and spot-check
 python ${CLAUDE_PLUGIN_ROOT}/scripts/sync-development-stories.py apply --project-root <project root> --draft <temp>/draft.json [--target <doc>] --expected-source-sha256 <sha from inspect> --dry-run
 ```
 
-Read the JSON. If it is refused with `conflicts`, show each (current vs proposed content) and ask the user, per story, whether to keep their version, overwrite it, restore it (deleted by hand) or allow its removal. Translate the answers into `--overwrite`, `--restore`, `--allow-remove`; if the user keeps their version, change the draft instead. If it asks for `--acknowledge-changes`, show `unacknowledged_changes` to the user first and pass the flag only after they have seen them and the draft deals with them. Re-run the dry run until it succeeds, show the user the plan (created, updated, unchanged, removed), then run the same command without `--dry-run`.
+Read the JSON. If it is refused with `conflicts`, show each (its `representation` says whether the document story or the detailed story is affected; current vs proposed content) and ask the user, per story, whether to keep their version, reconcile, overwrite it (regenerate), restore it (deleted by hand) or allow its removal. Translate the answers into `--overwrite`, `--restore`, `--allow-remove`; if the user keeps their version, change the draft instead (for a hand-edited detailed story, take the story as the export gives it and have the agent bring the ultra-lean story into line). If it asks for `--acknowledge-changes`, show `unacknowledged_changes` to the user first and pass the flag only after they have seen them and the draft deals with them. Re-run the dry run until it succeeds, show the user the plan (created, updated, unchanged, removed), then run the same command without `--dry-run`.
 
 ## Step 8 — Check the result
 
 Read the JSON. Do not report success unless `ok` is true. Exit code `1`: nothing changed, explain. `2`: nothing changed, explain the I/O failure. `3`: stories and state saved, the HTML report is stale — say so and point to `/sdlc-pipeline:ba-generate-report`. `4`: the document was saved and verified but the state was not — do not call this complete; run `inspect` then `accept` (see `/sdlc-pipeline:ba-sync-stories`).
 
-Run `summary --project-root <root>` for the real counts.
+Run `summary --project-root <root>` for the real counts, and `python ${CLAUDE_PLUGIN_ROOT}/scripts/validate-development-stories.py --document <target> --project-root <project root>` to confirm that every story in the document has a matching detailed story in `stories/detailed_stories.md`, that the document holds only Story ID, short summary and acceptance criteria, that IDs and summaries agree, and that the hashes are current.
 
 ## Step 9 — Execution summary
 
@@ -116,7 +117,7 @@ Report actual values only:
 Development story generation completed.
 
 Atomic requirements analysed: <summary.requirements.analysed>
-Stories generated: <created count from apply>   (stories in document: <summary.stories>)
+Stories generated: <created count from apply>   (ultra-lean stories in document: <summary.stories>; detailed stories in stories/detailed_stories.md: <summary.detailed.stories>)
 Requirements covered: <summary.requirements.covered>
 Requirements requiring review: <count of summary.requirements.not_covered + uncovered_unexplained>
 
@@ -126,15 +127,17 @@ Gap traceability:
 - Resolved gaps referenced: <summary.gaps.referenced.resolved>
 (or: Gap register not available — gap traceability was not checked.)
 
-Document updated:
-- <target path>   (backup: <apply.backup>)
+Files updated:
+- stories/detailed_stories.md   (<apply.detailed_changed count> detailed stories written; backup: <apply.detailed_backup, if any>)
+- <target path>   (ultra-lean stories; backup: <apply.backup>)
+- stories/story-generation-state.json
 
-Report: report/phase3-report.html (<generated | stale: run /sdlc-pipeline:ba-generate-report>)
+Report: report/phase3-report.html (built from stories/detailed_stories.md; <generated | stale: run /sdlc-pipeline:ba-generate-report>)
 
 Validation: <Passed | Failed>
 ```
 
-Explain every requirement listed as not covered. If any resolved decision is still pending (`pending_decisions` in a fresh `inspect`), say so and suggest `/sdlc-pipeline:ba-enrich-stories`. Remind the user that open and skipped gaps are still unresolved, that stories contain only what the requirements and resolved decisions support, and that the report is read-only.
+Explain every requirement listed as not covered. If any resolved decision is still pending (`pending_decisions` in a fresh `inspect`), say so and suggest `/sdlc-pipeline:ba-enrich-stories`. Remind the user that open and skipped gaps are still unresolved, that stories contain only what the requirements and resolved decisions support, that the requirements document holds only the ultra-lean stories while all detailed stories are in the single file `stories/detailed_stories.md`, and that the report is read-only.
 
 ## Pipeline checkpoint (final step, non-fatal)
 

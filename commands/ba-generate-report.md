@@ -18,7 +18,7 @@ If a path below still contains the literal text `${CLAUDE_PLUGIN_ROOT}`, find th
 python ${CLAUDE_PLUGIN_ROOT}/scripts/sync-development-stories.py regenerate-report --project-root <project root>
 ```
 
-The report is built from the saved `# Development Stories` section of the recorded target document, from `gaps/gaps.json` and from the story state (traceability only). It is written to a temporary file, replaced, read back and checked. A failed run leaves the previous report untouched.
+The report is built from the consolidated `stories/detailed_stories.md` (the full functional and non-functional stories, not the ultra-lean entries in the requirements document), from `gaps/gaps.json` and from the story state (traceability, hashes and synchronisation). The Development Stories section of the recorded target document is read only to check that each story has a matching entry. It is written to a temporary file, replaced, read back and checked. A failed run leaves the previous report untouched.
 
 ## Step 2 — Check the result
 
@@ -43,7 +43,7 @@ Synchronisation: <In sync | Edited since the last sync: run /sdlc-pipeline:ba-sy
 Stories, gaps and decisions were not changed.
 ```
 
-If `summary` says the document was edited since the last sync, point out that the report shows the document as it is now and the section is flagged "Out of sync". If the report is missing sections because gap data is unavailable, say so rather than implying a complete view. Remind the user the report is a read-only view: stories are edited in the requirements document and decisions are recorded through `/sdlc-pipeline:ba-triage-gaps`.
+If `summary` says a document or detailed story was edited since the last sync, point out that the report shows the detailed stories as they are now and is flagged "Out of sync". If a story has no detailed story, the report says so for that story instead of showing the shortened document text. If the report is missing sections because gap data is unavailable, say so rather than implying a complete view. Remind the user the report is a read-only view: detailed stories are edited in `stories/detailed_stories.md`, the ultra-lean stories in the requirements document, and decisions are recorded through `/sdlc-pipeline:ba-triage-gaps`.
 
 ## Pipeline checkpoint (final step, non-fatal)
 

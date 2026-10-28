@@ -16,11 +16,22 @@ A skipped gap is never counted, shown or described as resolved.
 |---|---|---|---|
 | Provide a confirmed decision | `open`, `skipped` | `resolved` | Yes, appended |
 | Revise a decision | `resolved` | `resolved` | Yes, appended (explicit user request only) |
-| Skip this gap | `open` | `skipped` | No |
+| Skip for now / Skip this gap | `open` | `skipped` | No |
 | Reopen | `resolved`, `skipped` | `open` | No (history kept) |
-| Skip all remaining | none | none | No |
+| Skip all remaining (Medium/Low only) | `open` (each remaining Medium/Low gap) | `skipped` | No |
 
 Anything else is refused. A resolved gap is not skipped; reopen it first.
+
+## Choices offered
+
+Each gap is asked with AskUserQuestion: the question holds its ID, priority and one concise gap statement, and the options are:
+
+| Priority | Options (plus the automatic **Other** for a free-text description or decision) |
+|---|---|
+| Critical, High | **Skip for now**; **Stop triage** |
+| Medium, Low | **Skip this gap**; **Skip all remaining gaps** (all remaining Medium/Low gaps in the current run) |
+
+"Skip all remaining gaps" is never offered for, and never applies to, a Critical or High gap. The Critical/High story-generation gate is unchanged: a skipped Critical or High gap still blocks it.
 
 ## Decision history
 
@@ -33,9 +44,9 @@ Anything else is refused. A resolved gap is not skipped; reopen it first.
 ## Triage session
 
 1. **Order:** Critical, High, Medium, Low; within a priority, ascending gap number. Take the order from the store's `list` output, do not re-sort.
-2. **One gap at a time.** Show the ID, priority, definition, affected requirement IDs and descriptions, and progress ("Gap 2 of 12").
+2. **One gap at a time.** Show the ID, priority, one concise gap statement and progress ("Gap 2 of 12"), then ask with the options for its priority (see "Choices offered").
 3. **Persist every change immediately** through `scripts/gap-register-store.py`. It validates, saves atomically, reads back and regenerates the HTML. Never edit `gaps.json` or the HTML by hand.
-4. **Skip all remaining** is a session control, not a decision. Write nothing for the remaining gaps: skipped ones stay skipped, unreviewed ones stay open.
+4. **Skip all remaining** is a session control, not a decision, and applies to Medium and Low gaps only. Record each skip immediately through the store, one gap at a time: every remaining Medium/Low gap that is `open` becomes `skipped` and is kept for later triage; ones already `skipped` stay skipped. Never treat a skipped gap as resolved.
 5. **Cancel** (the user stops) preserves everything already saved and ends the session with a summary.
 6. **Resume** by running the command again. Load, validate, queue open and skipped gaps, start at the highest priority. Never repeat a recorded decision or create duplicates.
 7. **No re-analysis.** Triage never runs gap analysis. If the store reports that the atomic requirements changed, tell the user to run `/sdlc-pipeline:ba-analyse-gaps` and stop.
