@@ -1,7 +1,7 @@
 # BA plugin upgrade to v0.7.5 + acceptance gate before the PR — Design
 
 - **Date:** 2026-10-28
-- **Status:** Draft — awaiting client approval
+- **Status:** Approved — implemented on feature/pipeline-all
 - **Branch:** `feature/pipeline-all` (plugin 3.3.0 → 3.4.0)
 - **Source:** `akhilvn-crypto/BA-Pipeline`, folder `ba-requirements-plugin`, commit `7d58b5b`
   (v0.7.5). Our copy is from `34f6c0b` (v0.5.1).
