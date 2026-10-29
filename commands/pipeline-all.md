@@ -246,7 +246,7 @@ below always get the absolute form.
 - Stage R and Stage Q stops end with their own line only — never the next-part line.
 - `BA_STATUS: COMPLETED` → record `ba: <artifact root> (completed)`, then keep machine-specific
   files out of git with one Bash call:
-  `[ -f <artifact root>/.gitignore ] || printf '.ba-requirements/\nstories/backups/\n' > <artifact root>/.gitignore`.
+  `[ -f <artifact root>/.gitignore ] || printf '.ba-requirements/\nstories/backups/\nacceptance/verdicts.json\n' > <artifact root>/.gitignore`.
   If `ba-run` reported that the BA analysis was already complete (a resumed run), do not
   ask — continue to Stage 0.5. Otherwise ask with `AskUserQuestion`: **Stop and resume in a
   fresh session (Recommended — lower cost)** | **Continue now**. The BA instructions stay in
@@ -257,7 +257,12 @@ below always get the absolute form.
 ### Story export (used by Stage 1 and Stage 5.85)
 
 Run it once Stage Q ends with `ba: <artifact root> (completed)` (a resumed or already-complete
-run included) and `<PLUGIN_ROOT>` is not `unset`. `<absolute REQUIREMENTS path>` =
+run included). If `<PLUGIN_ROOT>` is `unset`, resolve it first: one Glob for
+`**/scripts/acceptance-checklist.py` with its path set to `<HOME>/.claude/plugins` (absolute),
+and take the plugin root above `scripts/`. None found → record `acceptance: blocked (plugin
+root not found)` and end the run now, before Stage 0.5: "Plugin root not found, so the
+acceptance check cannot run — no build started. Re-run from the installed plugin."
+`<absolute REQUIREMENTS path>` =
 `<repo root>/<REQUIREMENTS path>` (unchanged when already absolute). One Bash call writes the
 stories as JSON; the command's stdout (the whole draft) goes to a file that is shown only on
 failure:
@@ -565,7 +570,7 @@ Governed by **superpowers:executing-plans**; per-task dispatch follows
    `<artifact root>` when it exists, with its `.gitignore` but without its checkpoint and
    story backups (the checkpoint stores absolute local paths and the backups duplicate the
    requirements file):
-   `if [ -d <artifact root> ]; then git add <artifact root> ':!<artifact root>/.ba-requirements' ':!<artifact root>/stories/backups'; fi`.
+   `if [ -d <artifact root> ]; then git add <artifact root> ':!<artifact root>/.ba-requirements' ':!<artifact root>/stories/backups' ':!<artifact root>/acceptance'; fi`.
    Commit only if something is staged
    (`git diff --cached --quiet || git commit -m "docs: requirements for <slug>"`).
    After a split this includes all parts, so later parts reach the base branch with this PR.
@@ -679,8 +684,8 @@ Every acceptance criterion must be proven met, or accepted by the client as a fo
 before Stage 6. "End the run" below means: branch kept, no PR; if `REMAINING_PARTS` is not
 empty, end with the "Finish this part first …" line from the Hard rules.
 
-`<PLUGIN_ROOT>` is `unset` → record `acceptance: blocked (plugin root not found)` and end the
-run with: "Plugin root not found, so the acceptance check cannot run — branch kept, no PR.
+`<PLUGIN_ROOT>` is still `unset` (backstop — Stage Q resolves it when BA ran) → record
+`acceptance: blocked (plugin root not found)` and end the run with: "Plugin root not found, so the acceptance check cannot run — branch kept, no PR.
 Re-run from the installed plugin."
 
 `<acceptance dir>` = `<absolute artifact root>/acceptance` when the ledger says
@@ -712,7 +717,8 @@ holds `checklist.json`, `verdicts.json`, `acceptance-report.md` and `acceptance-
    `grep -HowF -e <ID> … docs/plans/<slug>/task-*.md`. On entering step 3, that call also
    prints `git rev-parse HEAD`; record it as `<pre-fix sha>`. Then dispatch a fresh
    `implementer` per affected task — **sequential**, one at a time (they share the working
-   tree) — with the task file path and its fix IDs, criterion text and fix hints. IDs no task
+   tree) — with the task file path and its fix IDs, criterion text and fix hints, plus: "Stage
+only the files you changed — never `git add -A`; leave `<acceptance dir>` untouched." IDs no task
    file cites → one more implementer with those IDs, texts and hints only. Re-check: dispatch
    `acceptance-verifier` with the step 2 inputs plus the re-check IDs (this round's fix IDs)
    → `render`. A re-check `BLOCKED` or `render` exit 2 is handled as in step 2. From step 2:
@@ -720,7 +726,9 @@ holds `checklist.json`, `verdicts.json`, `acceptance-report.md` and `acceptance-
    early when there are none. From step 4: exactly one round per **Fix more**. If any fix commit was made, write
    `git diff <pre-fix sha>..HEAD` (the Stage 5 filters) to a file and dispatch
    `code-reviewer` on the fix commit range only: that diff file path and the fixed IDs. Its
-   findings are handled as in Stage 5, `code-reviewer` only.
+   findings are handled as in Stage 5, `code-reviewer` only; if they lead to further implementer
+commits, re-check the fixed IDs once more (verifier with those IDs → `render`), handled as in
+step 2.
 4. **Client decision.** Still `not_met` or `cannot_verify` → ask ONE batched question listing
    them (ID · status · criterion · fix hint or reason) — `AskUserQuestion` with one question
    per item when there are at most 4, otherwise one message the client answers per ID. Per

@@ -191,8 +191,9 @@ Stage R    Requirements (requirements-writer) ── ★ YOU APPROVE THE REQUIRE
 Stage Q    BA analysis (ba-run): atomic requirements → gaps → triage with you → stories
 Stage 0.5  Your preferences: TDD, unit tests
 Stage 0.8  Requirements → contract (distil if large, else copy)
-Stage 1 →  Same as the FEATURE track above (plan, reviews, ★ plan approval ★, build, gates, ship)
+Stage 1 →  Same as the FEATURE track above (plan, reviews, ★ plan approval ★, build, gates, docs)
 Stage 5.85 Acceptance gate (acceptance-verifier): every story criterion proven, before the PR
+Stage 6    Ship PR (via gstack /ship)
 ```
 
 ## Hard rules the pipeline enforces
