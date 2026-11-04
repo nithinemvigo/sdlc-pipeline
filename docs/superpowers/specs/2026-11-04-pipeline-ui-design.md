@@ -90,18 +90,24 @@ If `CLAUDE_PLUGIN_ROOT` is unset (Cursor), step 1 is skipped, step 2 prints
   `C--Users-EMVIGO-USER-Muhassin-workspace-claude-investigation-emi`).
 - **Fallback** when that folder does not exist (for example, Claude Code shortened a very
   long path): scan the folders under `<config dir>/projects/` and keep those whose first
-  entry carrying a `cwd` field has a `cwd` equal to a project path. The result is cached for
-  the server's lifetime.
+  entry carrying a `cwd` field has a `cwd` equal to a project path. The folder list is
+  computed on first use and kept, except that an empty list is recomputed on the next
+  request (so a project whose first session starts after the server does still appears).
 - Each session: `<folder>/<session id>.jsonl` (main session) and
   `<folder>/<session id>/subagents/agent-<id>.jsonl` plus `agent-<id>.meta.json`
   (`agentType`, `description`, `toolUseId`, `spawnDepth`).
 
 ### 6.2 Runs
 
-- **Run start:** a main-session entry with `type: "user"`, `isSidechain: false`, whose
-  message text matches
-  `<command-name>/?(?:sdlc-pipeline:)?(pipeline|pipeline-all|pipeline-parallel|pipeline-ui)</command-name>`.
-  Runs started directly with an existing flow are listed too.
+- **Run start:** a main-session entry with `type: "user"`, `isSidechain: false`, not
+  `isMeta`, whose message text *starts with* `<command-message>` or `<command-name>` and
+  matches
+  `<command-name>/?(?:sdlc-pipeline:)?(pipeline-all|pipeline-parallel|pipeline-ui|pipeline)</command-name>`.
+  Runs started directly with an existing flow are listed too. The "starts with" rule matters:
+  subagent hand-back reports arrive in the main session as user messages, and one that quotes
+  a command must not open a new run. (Verified on the 2026-10-29 EMI run: a Skill hand-off
+  such as `/pipeline-ui` → `pipeline-all` is logged as a `tool_result`
+  "Launching skill: …", not as a new `<command-name>` entry, so it does not split the run.)
 - **Run end:** the next run start in the same session, or the end of the file.
 - **Run id:** `<session id>:<line number of the start entry>`.
 - **Flow:** the matched command name. For `pipeline-ui`, the flow is the name in the first
@@ -123,9 +129,17 @@ If `CLAUDE_PLUGIN_ROOT` is unset (Cursor), step 1 is skipped, step 2 prints
 - Per agent: type (without the `sdlc-pipeline:` prefix), description, model (the most common
   `message.model`, ignoring `<synthetic>`), first and last timestamp, duration, usage
   (section 7), state:
-  - **finished:** the last assistant entry has `stop_reason: "end_turn"`;
+  - **finished:** the agent called `SubagentHandback` and has no assistant entry after that
+    call; or, with no hand-back in its transcript, the main session has a
+    `<task-notification>` whose `<task-id>` is the agent's id; or its last entry is an
+    assistant entry with `stop_reason: "end_turn"` (foreground agents);
   - **running:** otherwise, and the file was written in the last 10 minutes;
   - **interrupted:** otherwise.
+
+  (Verified on the EMI run: pipeline agents run asynchronously, every assistant entry has
+  `stop_reason: "tool_use"`, and a finished agent's transcript ends with the
+  `SubagentHandback` call and its "Report delivered to your caller." result. The agent id is
+  the `agent-<id>` file name, which is also the notification's `<task-id>`.)
 
 ### 6.4 Stages
 
@@ -173,7 +187,12 @@ The table lives in `stages.py` as data, so a new agent type is a one-line change
   question text and option labels.
 - **Answer:** the text of the matching `tool_result`. If that result is an error (the
   client answered in chat instead, as happens in the desktop app), the answer is the first
-  300 characters of the next user message, marked `answered in chat`.
+  300 characters of the next message the client typed, marked `answered in chat`. A typed
+  message is a user entry that is not `isMeta`, carries no `tool_result`, has no `origin`
+  other than the user (task notifications and hand-back reports carry one), and has text left
+  after removing `<system-reminder>` blocks.
+- A normal answer like `User has answered your questions: "Q"="A". …` is shown as the
+  `A` values joined with `; `; any other result text is shown as is (first 300 characters).
 - No result yet: **pending**.
 
 ### 6.6 Tasks and changes
@@ -268,7 +287,7 @@ Both *waiting for you* rules show how long it has waited (`waiting for you · 3 
 |---|---|
 | `/` | `pipeline-ui.html` |
 | `/api/health` | `project`, plugin version, `pid` |
-| `/api/runs` | Run list: id, flow, title, branch, status, started, duration, token total, estimated cost, linked run ids |
+| `/api/runs` | `project`, the transcript `folders` searched (for the empty state), and `runs`: id, flow, title, branch, status, started, duration, token total, estimated cost, linked run ids |
 | `/api/runs/<id>` | Run view: the above plus stages, agents, checkpoints, tasks with commits, artifact keys, read warnings (section 10) |
 | `/api/diff?run=<id>&commit=<sha>` | Text of the diff |
 | `/api/file?run=<id>&key=<key>` | One artifact from 6.7 |
@@ -283,7 +302,8 @@ start. The plan folder and git results are cached for 5 seconds.
 ## 10. The page
 
 - **Runs list** (newest first): started, flow, title, branch, status badge, duration, total
-  tokens, estimated cost. Linked runs are grouped under their branch.
+  tokens, estimated cost. A run that continues an earlier run's branch is marked "resumed
+  from an earlier run on this branch".
 - **Run view:**
   - header: title, flow, branch, status, duration, total tokens, estimated cost;
   - stage timeline across the top, with checkpoints between stages;
@@ -316,12 +336,21 @@ start. The plan folder and git results are cached for 5 seconds.
 ## 12. Security
 
 - Binds to `127.0.0.1` only. Never `0.0.0.0`.
+- Requests whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>` get a 403,
+  so a web page using DNS rebinding cannot read transcripts through the server.
+- The CLI's own health checks bypass any `HTTP_PROXY` setting.
+- Branch names read from transcripts are never passed to git if they start with `-`.
 - Every endpoint is read-only. The only file written is the state file (9.2).
 - `/api/diff` accepts only a 40-character hex sha that is in that run's commit list; git is
   called with an argument list, never through a shell.
 - `/api/file` accepts only keys from that run's artifact list (6.7); there is no path
   parameter. Resolved paths must stay inside the repository.
-- HTML artifacts are served with `Content-Security-Policy: sandbox`.
+- HTML artifacts are served with `Content-Security-Policy: sandbox allow-scripts`: the BA
+  reports keep working, but run in an opaque origin, so they cannot read the dashboard's API
+  (the server sends no CORS headers).
+- The page itself is served with a Content-Security-Policy that allows no external scripts,
+  styles, fonts or connections, and builds every element with text nodes (no `innerHTML`),
+  so transcript text can never run as markup.
 - Every response sets `Cache-Control: no-store`, so transcript content is not cached by the
   browser.
 
