@@ -1,3 +1,348 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Pipeline runs</title></head>
-<body><p>Pipeline dashboard: the page arrives in the next task. The API is at /api/runs.</p></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline runs</title>
+<style>
+:root {
+  --bg: #f6f6f3; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc;
+  --accent: #2f5fd0; --ok: #1f7a4d; --warn: #9a5800; --bad: #b3261e; --add: #e3f4e8; --del: #fbe7e5;
+  --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615; --panel: #1f1f1d; --text: #ecebe6; --muted: #9a9993; --line: #34342f;
+    --accent: #8fb0ff; --ok: #5fcf95; --warn: #f0b35a; --bad: #ff8a80; --add: #173a26; --del: #4a1f1c;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 1; }
+header h1 { font-size: 16px; margin: 0; }
+header a.home { color: inherit; text-decoration: none; }
+.grow { flex: 1; }
+main { max-width: 1200px; margin: 0 auto; padding: 16px 16px 48px; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: 12px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.nowrap { white-space: nowrap; }
+.err { color: var(--bad); padding: 0 16px; }
+.warn { padding: 8px 10px; border: 1px solid var(--warn); color: var(--warn); border-radius: 6px; margin: 10px 0; }
+.wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; font-size: 12px; color: var(--muted); }
+th.sort { cursor: pointer; }
+tr.click { cursor: pointer; }
+tr.click:hover td, tr.click:focus td { background: var(--bg); }
+tr.orch td { background: var(--bg); }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.badge { display: inline-block; padding: 0 8px; border-radius: 999px; font-size: 12px; border: 1px solid currentColor; white-space: nowrap; }
+.s-running { color: var(--accent); } .s-waiting { color: var(--warn); } .s-finished { color: var(--ok); }
+.s-stopped { color: var(--muted); } .s-interrupted, .s-error { color: var(--bad); }
+.tag { margin-left: 6px; font-size: 11px; padding: 0 6px; border-radius: 4px; background: var(--warn); color: var(--panel); }
+section { margin-top: 22px; }
+h2 { font-size: 14px; margin: 0 0 8px; }
+h2.title { font-size: 18px; margin-top: 4px; }
+h3 { font-size: 13px; margin: 12px 0 4px; }
+.timeline { display: flex; flex-wrap: wrap; gap: 6px; }
+.stage { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); font-size: 12px; min-width: 110px; }
+.stage.done { border-color: var(--ok); }
+.stage.in-progress { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.stage.skipped { opacity: .55; border-style: dashed; }
+.stage.not-reached { opacity: .45; }
+.stage.cp { min-width: 0; border-color: var(--warn); }
+.stage.cp.pending { box-shadow: inset 0 0 0 1px var(--warn); }
+ol.cps { padding-left: 20px; margin: 0; }
+ol.cps li { margin: 0 0 10px; }
+ul.commits, ul.files { list-style: none; padding: 0; margin: 0; }
+ul.commits li, ul.files li { margin: 6px 0; }
+button { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px; cursor: pointer; }
+pre { font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; max-height: 520px; overflow: auto; }
+pre .add { background: var(--add); } pre .del { background: var(--del); }
+.empty { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+@media (max-width: 700px) { .hide-sm { display: none; } th, td { padding: 6px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1><a class="home" href="#">Pipeline runs</a></h1>
+  <span id="project" class="muted small"></span>
+  <span class="grow"></span>
+  <span id="updated" class="muted small"></span>
+</header>
+<div id="err" class="err" role="status"></div>
+<main id="main"><p class="muted">Loading&hellip;</p></main>
+<script>
+"use strict";
+const state = { timer: null, updated: 0, sort: "start", diffs: new Map(), file: null };
+const $ = (selector) => document.querySelector(selector);
+
+// Build DOM with text nodes only: transcript text can never become markup.
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === null || value === undefined || value === false) continue;
+    if (key === "class") el.className = value;
+    else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
+    else el.setAttribute(key, value === true ? "" : String(value));
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+
+const STATUS_LABEL = { running: "running", waiting: "waiting for you", finished: "finished",
+  stopped: "stopped", interrupted: "interrupted", error: "error" };
+
+function ago(epochSeconds) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - epochSeconds));
+  if (s < 60) return s + " s";
+  if (s < 3600) return Math.round(s / 60) + " min";
+  if (s < 86400) return Math.round(s / 3600) + " h";
+  return Math.round(s / 86400) + " d";
+}
+function badge(status, since) {
+  const label = (STATUS_LABEL[status] || status) + (status === "waiting" && since ? " · " + ago(since) : "");
+  return h("span", { class: "badge s-" + status }, label);
+}
+function fmtTokens(n) {
+  if (n === null || n === undefined) return "—";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+  return String(n);
+}
+function fmtCost(cost, complete) {
+  if (cost === null || cost === undefined || (!cost && !complete)) return "—";
+  return "$" + cost.toFixed(cost < 1 ? 3 : 2) + (complete ? "" : "+");
+}
+function fmtDur(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  const s = Math.round(seconds);
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m " + (s % 60) + "s";
+  return Math.floor(m / 60) + "h " + (m % 60) + "m";
+}
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso) : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+function isLive(status) { return status === "running" || status === "waiting"; }
+function route() { const m = location.hash.match(/^#run=(.+)$/); return m ? decodeURIComponent(m[1]) : null; }
+function openRun(id) { location.hash = "run=" + encodeURIComponent(id); }
+async function getJSON(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }
+async function getText(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); }
+function show(node) { $("#main").replaceChildren(node); }
+
+async function refresh() {
+  clearTimeout(state.timer);
+  const id = route();
+  let live = false;
+  try {
+    if (id) {
+      const d = await getJSON("/api/runs/" + encodeURIComponent(id));
+      show(renderRun(d));
+      live = isLive(d.status);
+      document.title = d.title + " · Pipeline runs";
+    } else {
+      const d = await getJSON("/api/runs");
+      $("#project").textContent = d.project;
+      show(renderList(d));
+      live = d.runs.some((r) => isLive(r.status));
+      document.title = "Pipeline runs";
+    }
+    state.updated = Date.now();
+    $("#err").textContent = "";
+  } catch (e) {
+    $("#err").textContent = "Could not load from the dashboard server (" + e.message + "). If it stopped, run /sdlc-pipeline:pipeline-ui again.";
+  }
+  state.timer = setTimeout(refresh, live ? 3000 : 30000);
+}
+
+function renderList(d) {
+  if (!d.runs.length) {
+    return h("div", { class: "empty" },
+      h("p", {}, "No pipeline runs found for ", h("code", {}, d.project), "."),
+      h("p", { class: "muted" }, "Looked in:"),
+      h("ul", {}, (d.folders.length ? d.folders : ["(no transcript folder for this project yet)"]).map((f) => h("li", {}, h("code", {}, f)))),
+      h("p", { class: "muted" }, "Start a run with /sdlc-pipeline:pipeline-ui and it appears here."));
+  }
+  const head = [["Started", ""], ["Flow", ""], ["Feature", ""], ["Branch", "hide-sm"], ["Status", ""],
+    ["Duration", "num hide-sm"], ["Tokens", "num"], ["Est. cost", "num"]];
+  const rows = d.runs.map((r) => h("tr", { class: "click", tabindex: 0, onclick: () => openRun(r.id),
+      onkeydown: (e) => { if (e.key === "Enter") openRun(r.id); } },
+    h("td", { class: "nowrap" }, fmtTime(r.started)),
+    h("td", {}, r.flow),
+    h("td", {}, r.title,
+      r.resumed_from ? h("div", { class: "muted small" }, "resumed from an earlier run on this branch") : null,
+      r.errors ? h("div", { class: "err small" }, Object.values(r.errors).join("; ")) : null),
+    h("td", { class: "hide-sm" }, h("code", {}, r.branch || "—")),
+    h("td", {}, badge(r.status, r.waiting_since)),
+    h("td", { class: "num hide-sm" }, fmtDur(r.duration_s)),
+    h("td", { class: "num" }, fmtTokens(r.tokens && r.tokens.total)),
+    h("td", { class: "num" }, fmtCost(r.cost, r.cost_complete))));
+  return h("div", { class: "wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, head.map(([label, cls]) => h("th", { class: cls || null }, label)))),
+    h("tbody", {}, rows)));
+}
+
+function part(title, error, build) {
+  return h("section", {}, h("h2", {}, title),
+    error ? h("p", { class: "err" }, "Could not read this part: " + error) : build());
+}
+
+function renderRun(d) {
+  const byId = {};
+  (d.agents || []).forEach((a) => { byId[a.id] = a; });
+  const errs = d.errors || {};
+  return h("div", {},
+    h("p", {}, h("a", { href: "#" }, "← All runs")),
+    h("h2", { class: "title" }, d.title),
+    h("p", { class: "muted" }, d.flow, " · ", h("code", {}, d.branch || "—"), " · started ",
+      fmtTime(d.started), " · ", fmtDur(d.duration_s), " · ", fmtTokens(d.tokens && d.tokens.total),
+      " tokens · ", fmtCost(d.cost, d.cost_complete), " (estimate) ", badge(d.status, d.waiting_since)),
+    (d.warnings || []).map((w) => h("div", { class: "warn" }, w)),
+    errs.run ? h("div", { class: "warn" }, "This run could not be read fully: " + errs.run) : null,
+    part("Stages", errs.stages, () => timeline(d.stages || [], d.checkpoints || [], byId)),
+    part("Agents", errs.agents, () => agentsTable(d.agents || [])),
+    part("Questions", errs.checkpoints, () => checkpointList(d.checkpoints || [])),
+    part("Tasks and changes", errs.tasks, () => tasksView(d.id, d.tasks)),
+    part("Files", errs.artifacts, () => artifactsView(d.id, d.artifacts || [])));
+}
+
+function timeline(stages, checkpoints, byId) {
+  const cps = checkpoints.slice().sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+  const items = [];
+  let next = 0;
+  for (const s of stages) {
+    const starts = s.agents.map((id) => byId[id] && byId[id].started).filter(Boolean).sort();
+    if (starts.length) while (next < cps.length && String(cps[next].time || "") < starts[0]) items.push(cpChip(cps[next++]));
+    items.push(h("div", { class: "stage " + s.state.replace(/\s+/g, "-"), title: s.state },
+      h("div", {}, s.key + " · " + s.label),
+      h("div", { class: "muted small" }, s.state + (s.agents.length ? " · " + s.agents.length + (s.agents.length === 1 ? " agent" : " agents") : ""))));
+  }
+  while (next < cps.length) items.push(cpChip(cps[next++]));
+  return h("div", { class: "timeline" }, items);
+}
+function cpChip(cp) {
+  const first = cp.questions[0] || {};
+  return h("div", { class: "stage cp" + (cp.pending ? " pending" : ""), title: cp.questions.map((q) => q.question).join("\n") },
+    h("div", {}, "? " + (first.header || "Question")),
+    h("div", { class: "muted small" }, cp.pending ? "waiting for you" : "answered"));
+}
+
+const SORTS = {
+  start: (a, b) => String(a.started || "").localeCompare(String(b.started || "")),
+  cost: (a, b) => (b.cost || 0) - (a.cost || 0),
+  duration: (a, b) => (b.duration_s || 0) - (a.duration_s || 0),
+};
+function agentsTable(rows) {
+  const sorted = rows.slice().sort(SORTS[state.sort] || SORTS.start);
+  const sortHead = (label, key) => h("th", { class: "num sort", title: "Sort by " + label.toLowerCase(),
+    onclick: () => { state.sort = state.sort === key ? "start" : key; refresh(); } }, label + (state.sort === key ? " ▾" : ""));
+  return h("div", { class: "wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Stage"), h("th", {}, "Agent"), h("th", { class: "hide-sm" }, "Model"),
+      h("th", { class: "hide-sm" }, "Started"), sortHead("Duration", "duration"), h("th", { class: "num hide-sm" }, "Input"),
+      h("th", { class: "num hide-sm" }, "Output"), h("th", { class: "num hide-sm" }, "Cache write"),
+      h("th", { class: "num hide-sm" }, "Cache read"), sortHead("Est. cost", "cost"), h("th", {}, "State"))),
+    h("tbody", {}, sorted.map((a) => h("tr", { class: a.type === "orchestrator" ? "orch" : null },
+      h("td", { class: "nowrap" }, a.stage_label, a.fix ? h("span", { class: "tag" }, "fix") : null),
+      h("td", {}, h("div", {}, (a.parent ? "↳ " : "") + a.type), h("div", { class: "muted small" }, a.description)),
+      h("td", { class: "hide-sm" }, a.model || "—"),
+      h("td", { class: "hide-sm nowrap" }, fmtTime(a.started)),
+      h("td", { class: "num" }, fmtDur(a.duration_s)),
+      h("td", { class: "num hide-sm" }, fmtTokens(a.tokens.input)),
+      h("td", { class: "num hide-sm" }, fmtTokens(a.tokens.output)),
+      h("td", { class: "num hide-sm" }, fmtTokens(a.tokens.cache_write)),
+      h("td", { class: "num hide-sm" }, fmtTokens(a.tokens.cache_read)),
+      h("td", { class: "num" }, fmtCost(a.cost, a.cost_complete)),
+      h("td", {}, badge(a.status || "stopped")))))));
+}
+
+function checkpointList(cps) {
+  if (!cps.length) return h("p", { class: "muted" }, "No questions asked yet.");
+  return h("ol", { class: "cps" }, cps.map((cp) => h("li", {},
+    h("div", { class: "muted small" }, fmtTime(cp.time)),
+    cp.questions.map((q) => h("div", {}, q.header ? h("strong", {}, q.header + ": ") : null, q.question)),
+    h("div", {}, cp.pending ? badge("waiting")
+      : h("span", {}, "→ ", cp.answer || "(no answer text)",
+          cp.answered_in_chat ? h("span", { class: "muted small" }, " (answered in chat)") : null)))));
+}
+
+function tasksView(runId, t) {
+  if (!t) return h("p", { class: "muted" }, "—");
+  const blocks = [];
+  if (!t.git) blocks.push(h("p", { class: "muted" }, "Git is not available here, so commits and diffs are hidden."));
+  if (t.tasks.length) {
+    for (const task of t.tasks) {
+      blocks.push(h("div", {}, h("h3", {}, "Task " + task.id + " — " + task.name),
+        commitList(runId, task.commits, t.git, "No commit mentions this task yet.")));
+    }
+  } else if (t.bug_plans.length) {
+    blocks.push(h("p", {}, "Bug plan: ", t.bug_plans.map((p) => h("code", {}, p + " "))));
+  } else {
+    blocks.push(h("p", { class: "muted" }, "No plan yet" + (t.slug ? " (looked in docs/plans/" + t.slug + "/)." : ".")));
+  }
+  if (t.other_commits.length) {
+    blocks.push(h("div", {}, h("h3", {}, t.tasks.length ? "Other commits" : "Commits"), commitList(runId, t.other_commits, t.git, "")));
+  }
+  return h("div", {}, blocks);
+}
+function commitList(runId, commits, git, empty) {
+  if (!commits.length) return empty ? h("p", { class: "muted small" }, empty) : null;
+  return h("ul", { class: "commits" }, commits.map((c) => h("li", {},
+    h("code", {}, c.sha.slice(0, 8)), " ", c.subject, " ", h("span", { class: "muted small" }, fmtTime(c.time)), " ",
+    git ? h("button", { onclick: () => toggleDiff(runId, c.sha) }, state.diffs.has(c.sha) ? "hide diff" : "show diff") : null,
+    state.diffs.has(c.sha) ? diffView(state.diffs.get(c.sha)) : null)));
+}
+async function toggleDiff(runId, sha) {
+  if (state.diffs.has(sha)) { state.diffs.delete(sha); refresh(); return; }
+  state.diffs.set(sha, "Loading…");
+  refresh();
+  try {
+    state.diffs.set(sha, await getText("/api/diff?run=" + encodeURIComponent(runId) + "&commit=" + encodeURIComponent(sha)));
+  } catch (e) {
+    state.diffs.set(sha, "Could not load this diff: " + e.message);
+  }
+  refresh();
+}
+function diffView(text) {
+  return h("pre", {}, text.split("\n").map((line) => h("span", {
+    class: line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : null,
+  }, line + "\n")));
+}
+
+function artifactsView(runId, items) {
+  if (!items.length) return h("p", { class: "muted" }, "No plan, requirements or reports found for this run yet.");
+  const url = (key) => "/api/file?run=" + encodeURIComponent(runId) + "&key=" + encodeURIComponent(key);
+  return h("div", {},
+    h("ul", { class: "files" }, items.map((a) => h("li", {},
+      a.kind === "html"
+        ? h("a", { href: url(a.key), target: "_blank", rel: "noopener" }, a.label)
+        : h("button", { onclick: () => toggleFile(url(a.key), a.key) }, (state.file && state.file.key === a.key ? "hide " : "") + a.label),
+      " ", h("code", { class: "muted" }, a.path)))),
+    state.file ? h("pre", {}, state.file.text) : null);
+}
+async function toggleFile(url, key) {
+  if (state.file && state.file.key === key) { state.file = null; refresh(); return; }
+  state.file = { key: key, text: "Loading…" };
+  refresh();
+  try { state.file = { key: key, text: await getText(url) }; }
+  catch (e) { state.file = { key: key, text: "Could not load this file: " + e.message }; }
+  refresh();
+}
+
+setInterval(() => {
+  if (state.updated) $("#updated").textContent = "updated " + Math.round((Date.now() - state.updated) / 1000) + " s ago";
+}, 1000);
+window.addEventListener("hashchange", () => { state.diffs.clear(); state.file = null; refresh(); });
+refresh();
+</script>
+</body>
+</html>
