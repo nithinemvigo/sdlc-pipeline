@@ -160,3 +160,58 @@ def finished_agent(agent_id, minute, session_id="sess-1", cwd="C:/repo", branch=
     t.tool_use(minute + duration, "SubagentHandback", {"message": "Done."}, "tu-%s-2" % agent_id, model=model)
     t.tool_result(minute + duration, "tu-%s-2" % agent_id, '{"success":true,"message":"Report delivered to your caller."}')
     return t
+
+
+import subprocess  # noqa: E402
+
+GIT_IDENTITY = ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"]
+
+
+def git(repo, *args):
+    proc = subprocess.run(["git", "-C", repo] + GIT_IDENTITY + list(args), capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError("git %s failed: %s" % (" ".join(args), proc.stderr.decode("utf-8", "replace")))
+    return proc.stdout.decode("utf-8", "replace").strip()
+
+
+def write_file(repo, relative, text, append=False):
+    path = os.path.join(repo, *relative.split("/"))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a" if append else "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    return path
+
+
+def make_git_repo(path):
+    os.makedirs(path, exist_ok=True)
+    git(path, "init", "-q")
+    git(path, "config", "core.autocrlf", "false")  # keep fixture files byte-exact on Windows
+    git(path, "symbolic-ref", "HEAD", "refs/heads/master")
+    write_file(path, "README.md", "demo\n")
+    write_file(path, "docs/bugs/rounding-mini-plan.md", "# Rounding bug\n")
+    git(path, "add", "-A")
+    git(path, "commit", "-q", "-m", "chore: start")
+    git(path, "checkout", "-q", "-b", "feature/calculate-emi")
+    write_file(path, "docs/plans/calculate-emi/00-overview.md", "# Plan\n")
+    write_file(path, "docs/plans/calculate-emi/task-01-scaffolding.md", "# Task 01\n")
+    write_file(path, "docs/plans/calculate-emi/task-02-validation.md", "# Task 02\n")
+    write_file(path, "docs/plans/calculate-emi/task-03-calculation.md", "# Task 03\n")
+    git(path, "add", "-A")
+    git(path, "commit", "-q", "-m", "docs: plan for calculate-emi")
+    for subject, line in (("feat: task 01 scaffolding", "x = 1\n"), ("feat(Task-02): validation", "y = 2\n"),
+                          ("feat: implement task 3 calculation", "z = 3\n")):
+        write_file(path, "emi.py", line, append=True)
+        git(path, "add", "-A")
+        git(path, "commit", "-q", "-m", subject)
+    write_file(path, "docs/features/calculate-emi.requirements.md", "# Requirements\n")
+    write_file(path, "docs/features/ba/calculate-emi/stories/detailed_stories.md", "# Stories\n")
+    write_file(path, "docs/features/ba/calculate-emi/acceptance/acceptance-report.md", "# Acceptance\n")
+    write_file(path, "docs/features/ba/calculate-emi/reports/phase3.html", "<!doctype html><title>r</title>\n")
+    git(path, "add", "-A")
+    git(path, "commit", "-q", "-m", "docs: requirements and BA output")
+    git(path, "checkout", "-q", "-b", "fix/rounding", "master")
+    write_file(path, "README.md", "fixed\n", append=True)
+    git(path, "add", "-A")
+    git(path, "commit", "-q", "-m", "fix: rounding")
+    git(path, "checkout", "-q", "feature/calculate-emi")
+    return path
