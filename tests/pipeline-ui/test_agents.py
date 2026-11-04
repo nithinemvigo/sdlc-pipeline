@@ -82,6 +82,23 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(nested.parent_id, "a-pl")
         self.assertIsNone(planner.parent_id)
 
+    def test_launching_call_beats_start_time(self):
+        main = fb.Transcript(session_id="s1")
+        main.command(0, "pipeline", "one")
+        main.tool_use(1, "Agent", {}, "tu-late")
+        main.command(10, "pipeline", "two")
+        run1, run2 = runs_mod.find_runs("s1", fb.parsed(main))
+
+        late = agents.Agent("a-late", {"agentType": "sdlc-pipeline:implementer", "toolUseId": "tu-late"},
+                            fb.parsed(fb.finished_agent("a-late", 12, spawn="tu-late-nested")), 0)
+        child = agents.Agent("a-child", {"agentType": "Explore", "toolUseId": "tu-late-nested", "spawnDepth": 2},
+                             fb.parsed(fb.finished_agent("a-child", 14)), 0)
+
+        by_run = agents.assign_agents([run1, run2], [child, late])
+        self.assertEqual([a.agent_id for a in by_run[run1.run_id]], ["a-late", "a-child"])
+        self.assertEqual(by_run[run2.run_id], [])
+        self.assertEqual(child.parent_id, "a-late")
+
 
 if __name__ == "__main__":
     unittest.main()
