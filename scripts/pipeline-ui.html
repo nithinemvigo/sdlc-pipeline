@@ -24,7 +24,7 @@ header a.home { color: inherit; text-decoration: none; }
 .grow { flex: 1; }
 main { max-width: 1200px; margin: 0 auto; padding: 16px 16px 48px; }
 a { color: var(--accent); }
-code { font-family: var(--mono); font-size: 12px; }
+code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 .nowrap { white-space: nowrap; }
@@ -77,7 +77,7 @@ pre .add { background: var(--add); } pre .del { background: var(--del); }
 <main id="main"><p class="muted">Loading&hellip;</p></main>
 <script>
 "use strict";
-const state = { timer: null, updated: 0, sort: "start", diffs: new Map(), file: null };
+const state = { timer: null, updated: 0, sort: "start", diffs: new Map(), file: null, seq: 0, dirty: false, last: null };
 const $ = (selector) => document.querySelector(selector);
 
 // Build DOM with text nodes only: transcript text can never become markup.
@@ -142,28 +142,36 @@ function show(node) { $("#main").replaceChildren(node); }
 
 async function refresh() {
   clearTimeout(state.timer);
+  const seq = ++state.seq;
   const id = route();
+  const url = id ? "/api/runs/" + encodeURIComponent(id) : "/api/runs";
   let live = false;
   try {
+    const text = await getText(url);
+    if (seq !== state.seq) return; // a newer refresh owns the page and the next poll
+    const d = JSON.parse(text);
+    const unchanged = !state.dirty && state.last && state.last.url === url && state.last.text === text;
     if (id) {
-      const d = await getJSON("/api/runs/" + encodeURIComponent(id));
-      show(renderRun(d));
       live = isLive(d.status);
+      if (!unchanged) show(renderRun(d));
       document.title = d.title + " · Pipeline runs";
     } else {
-      const d = await getJSON("/api/runs");
-      $("#project").textContent = d.project;
-      show(renderList(d));
       live = d.runs.some((r) => isLive(r.status));
+      $("#project").textContent = d.project;
+      if (!unchanged) show(renderList(d));
       document.title = "Pipeline runs";
     }
+    state.dirty = false;
+    state.last = { url: url, text: text };
     state.updated = Date.now();
     $("#err").textContent = "";
   } catch (e) {
+    if (seq !== state.seq) return;
     $("#err").textContent = "Could not load from the dashboard server (" + e.message + "). If it stopped, run /sdlc-pipeline:pipeline-ui again.";
   }
   state.timer = setTimeout(refresh, live ? 3000 : 30000);
 }
+function redraw() { state.dirty = true; refresh(); }
 
 function renderList(d) {
   if (!d.runs.length) {
@@ -171,7 +179,7 @@ function renderList(d) {
       h("p", {}, "No pipeline runs found for ", h("code", {}, d.project), "."),
       h("p", { class: "muted" }, "Looked in:"),
       h("ul", {}, (d.folders.length ? d.folders : ["(no transcript folder for this project yet)"]).map((f) => h("li", {}, h("code", {}, f)))),
-      h("p", { class: "muted" }, "Start a run with /sdlc-pipeline:pipeline-ui and it appears here."));
+      h("p", { class: "muted" }, "Run /sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-ui and it appears here."));
   }
   const head = [["Started", ""], ["Flow", ""], ["Feature", ""], ["Branch", "hide-sm"], ["Status", ""],
     ["Duration", "num hide-sm"], ["Tokens", "num"], ["Est. cost", "num"]];
@@ -192,28 +200,39 @@ function renderList(d) {
     h("tbody", {}, rows)));
 }
 
-function part(title, error, build) {
+function part(title, error, data, build) {
+  const missing = data === null || data === undefined;
   return h("section", {}, h("h2", {}, title),
-    error ? h("p", { class: "err" }, "Could not read this part: " + error) : build());
+    missing ? h("p", { class: "err" }, "Could not read this part: " + (error || "no data"))
+      : [error ? h("div", { class: "warn" }, error) : null, build()]);
 }
+
+const PART_ERRORS = ["stages", "agents", "checkpoints", "tasks", "artifacts"];
+const ERROR_LABEL = { session: "This session could not be read", run: "This run could not be read fully",
+  warnings: "Some run warnings could not be worked out" };
 
 function renderRun(d) {
   const byId = {};
   (d.agents || []).forEach((a) => { byId[a.id] = a; });
   const errs = d.errors || {};
-  return h("div", {},
+  const head = [
     h("p", {}, h("a", { href: "#" }, "← All runs")),
     h("h2", { class: "title" }, d.title),
     h("p", { class: "muted" }, d.flow, " · ", h("code", {}, d.branch || "—"), " · started ",
       fmtTime(d.started), " · ", fmtDur(d.duration_s), " · ", fmtTokens(d.tokens && d.tokens.total),
       " tokens · ", fmtCost(d.cost, d.cost_complete), " (estimate) ", badge(d.status, d.waiting_since)),
     (d.warnings || []).map((w) => h("div", { class: "warn" }, w)),
-    errs.run ? h("div", { class: "warn" }, "This run could not be read fully: " + errs.run) : null,
-    part("Stages", errs.stages, () => timeline(d.stages || [], d.checkpoints || [], byId)),
-    part("Agents", errs.agents, () => agentsTable(d.agents || [])),
-    part("Questions", errs.checkpoints, () => checkpointList(d.checkpoints || [])),
-    part("Tasks and changes", errs.tasks, () => tasksView(d.id, d.tasks)),
-    part("Files", errs.artifacts, () => artifactsView(d.id, d.artifacts || [])));
+    // every error not tied to a rendered section: session, run, warnings and any unknown key
+    Object.keys(errs).filter((k) => PART_ERRORS.indexOf(k) < 0).map((k) =>
+      h("div", { class: "warn" }, (ERROR_LABEL[k] || "Problem reading " + k) + ": " + errs[k])),
+  ];
+  if (errs.session) return h("div", {}, head); // placeholder run: nothing else to show
+  return h("div", {}, head,
+    part("Stages", errs.stages, d.stages, () => timeline(d.stages, d.checkpoints || [], byId)),
+    part("Agents", errs.agents, d.agents, () => agentsTable(d.agents)),
+    part("Questions", errs.checkpoints, d.checkpoints, () => checkpointList(d.checkpoints)),
+    part("Tasks and changes", errs.tasks, d.tasks, () => tasksView(d.id, d.tasks)),
+    part("Files", errs.artifacts, d.artifacts, () => artifactsView(d.id, d.artifacts)));
 }
 
 function timeline(stages, checkpoints, byId) {
@@ -244,8 +263,9 @@ const SORTS = {
 };
 function agentsTable(rows) {
   const sorted = rows.slice().sort(SORTS[state.sort] || SORTS.start);
-  const sortHead = (label, key) => h("th", { class: "num sort", title: "Sort by " + label.toLowerCase(),
-    onclick: () => { state.sort = state.sort === key ? "start" : key; refresh(); } }, label + (state.sort === key ? " ▾" : ""));
+  const sortHead = (label, key) => { const toggleSort = () => { state.sort = state.sort === key ? "start" : key; redraw(); }; return h("th", { class: "num sort", title: "Sort by " + label.toLowerCase(),
+    tabindex: 0, onclick: toggleSort, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSort(); } } }, label + (state.sort === key ? " ▾" : ""));
+  };
   return h("div", { class: "wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, h("th", {}, "Stage"), h("th", {}, "Agent"), h("th", { class: "hide-sm" }, "Model"),
       h("th", { class: "hide-sm" }, "Started"), sortHead("Duration", "duration"), h("th", { class: "num hide-sm" }, "Input"),
@@ -302,15 +322,15 @@ function commitList(runId, commits, git, empty) {
     state.diffs.has(c.sha) ? diffView(state.diffs.get(c.sha)) : null)));
 }
 async function toggleDiff(runId, sha) {
-  if (state.diffs.has(sha)) { state.diffs.delete(sha); refresh(); return; }
+  if (state.diffs.has(sha)) { state.diffs.delete(sha); redraw(); return; }
   state.diffs.set(sha, "Loading…");
-  refresh();
+  redraw();
   try {
     state.diffs.set(sha, await getText("/api/diff?run=" + encodeURIComponent(runId) + "&commit=" + encodeURIComponent(sha)));
   } catch (e) {
     state.diffs.set(sha, "Could not load this diff: " + e.message);
   }
-  refresh();
+  redraw();
 }
 function diffView(text) {
   return h("pre", {}, text.split("\n").map((line) => h("span", {
@@ -330,18 +350,18 @@ function artifactsView(runId, items) {
     state.file ? h("pre", {}, state.file.text) : null);
 }
 async function toggleFile(url, key) {
-  if (state.file && state.file.key === key) { state.file = null; refresh(); return; }
+  if (state.file && state.file.key === key) { state.file = null; redraw(); return; }
   state.file = { key: key, text: "Loading…" };
-  refresh();
+  redraw();
   try { state.file = { key: key, text: await getText(url) }; }
   catch (e) { state.file = { key: key, text: "Could not load this file: " + e.message }; }
-  refresh();
+  redraw();
 }
 
 setInterval(() => {
   if (state.updated) $("#updated").textContent = "updated " + Math.round((Date.now() - state.updated) / 1000) + " s ago";
 }, 1000);
-window.addEventListener("hashchange", () => { state.diffs.clear(); state.file = null; refresh(); });
+window.addEventListener("hashchange", () => { state.diffs.clear(); state.file = null; state.last = null; refresh(); });
 refresh();
 </script>
 </body>
