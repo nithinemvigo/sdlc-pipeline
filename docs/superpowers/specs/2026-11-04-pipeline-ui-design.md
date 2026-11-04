@@ -1,0 +1,372 @@
+# /pipeline-ui — local, read-only run dashboard — Design
+
+- **Date:** 2026-11-04
+- **Status:** Draft — awaiting review
+- **Branch:** `feature/pipeline-ui`, cut from `feature/pipeline-all` (plugin 3.4.1 → 3.5.0)
+
+## 1. Goal
+
+Give every developer a browser dashboard that shows, live, what a pipeline run on their own
+machine is doing: which stage it is in, which agents ran and are running, what each one cost
+in tokens and time, which questions were asked and answered, and what each task changed in
+the code.
+
+It is launched by a new command, `/sdlc-pipeline:pipeline-ui`, which opens the dashboard and
+then runs one of the existing flows. **The existing pipelines are not modified.**
+
+## 2. Decisions (client, 2026-11-04)
+
+| # | Decision |
+|---|---|
+| D1 | Read-only first. No start, pause, retry or approve from the UI in this version. |
+| D2 | Local only. Each developer sees only their own runs, on their own machine. No shared server, no login, nothing leaves the laptop. |
+| D3 | Scope is the current repository (including its git worktrees). |
+| D4 | A new command, `/pipeline-ui`, opens the dashboard and then asks which flow to run: `pipeline-all`, `pipeline` or `pipeline-parallel`. |
+| D5 | `/pipeline`, `/pipeline-all` and `/pipeline-parallel` are unchanged. The dashboard learns everything from files Claude Code and git already write, so a run adds no orchestrator tokens for tracking, and improvements to the flows reach `/pipeline-ui` automatically. |
+| D6 | Approach A: a Python standard-library server on `127.0.0.1` plus one self-refreshing HTML page. No Node, no npm, no build step. |
+
+## 3. Scope
+
+**In:** run list, run view (stage timeline, agents, checkpoints, tasks and diffs, artifact
+links), token usage and estimated cost, live refresh, the `/pipeline-ui` command, tests,
+README section, version bump.
+
+**Out (this version):** controlling runs (D1), sharing or other machines' runs (D2), runs in
+other repositories (D3), editing anything, Cursor (Cursor does not write Claude Code
+transcripts — see 5.2).
+
+## 4. Files
+
+All new, except the README and the three version fields.
+
+| File | Purpose |
+|---|---|
+| `commands/pipeline-ui.md` | The `/pipeline-ui` command (section 5). |
+| `scripts/pipeline-ui.py` | CLI: `start`, `serve`, `stop`, `status`. Starts the server and holds the HTTP handlers. |
+| `scripts/pipeline_ui/` | Package with one module per reader, so each is testable on its own: `transcripts.py`, `runs.py`, `agents.py`, `stages.py`, `checkpoints.py`, `usage.py`, `gitinfo.py`, `artifacts.py`, `status.py`. |
+| `scripts/pipeline-ui.html` | The page: vanilla HTML/CSS/JS in one file, no external requests. |
+| `scripts/pipeline-ui-prices.json` | Editable per-model price table for the cost estimate. |
+| `tests/pipeline-ui/` | Tests and hand-written fixtures (section 12). |
+| `README.md` | New "Watching a run" section. |
+| `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.cursor-plugin/plugin.json` | Version 3.4.1 → 3.5.0. |
+
+Everything must run on **Python 3.8+**, matching the README's existing requirement.
+
+## 5. The `/pipeline-ui` command
+
+### 5.1 Steps
+
+Arguments: `[--flow pipeline-all|pipeline|pipeline-parallel] <the request, as for the flow>`.
+
+1. **One Bash call** that resolves the plugin root and starts the dashboard:
+   `python "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline-ui.py" start --project "$(git rev-parse --show-toplevel)" --open`.
+   It prints one JSON line: `{"url": ..., "pid": ..., "reused": true|false}`, or
+   `{"error": ...}`.
+2. **One line to the client:** `Dashboard: <url>` (or `Dashboard not started: <error> — continuing without it.`).
+   A failed start never blocks the run.
+3. **Flow choice.** If `--flow` was given, use it. Otherwise one `AskUserQuestion`:
+   `pipeline-all` (features, requirements first — recommended for new features) ·
+   `pipeline` (features or bugs) · `pipeline-parallel` (features or bugs, parallel build).
+4. **Hand off:** invoke the Skill `sdlc-pipeline:<flow>` with the remaining arguments,
+   unchanged, then follow that skill exactly. `/pipeline-ui` adds no stages, rules or
+   questions of its own after this point.
+
+Total added cost per run: two or three orchestrator tool calls.
+
+### 5.2 Cursor
+
+If `CLAUDE_PLUGIN_ROOT` is unset (Cursor), step 1 is skipped, step 2 prints
+`The dashboard needs Claude Code; continuing without it.`, and steps 3–4 run as normal.
+
+## 6. Where the data comes from
+
+### 6.1 Transcript folders
+
+- Config dir = `$CLAUDE_CONFIG_DIR` if set, else `~/.claude`.
+- Project paths = the repo root plus every path from `git worktree list --porcelain`.
+- For each project path, its transcript folder is `<config dir>/projects/<encoded>`, where
+  `<encoded>` is the absolute path with every character outside `[A-Za-z0-9]` replaced by
+  `-` (verified: `C:\Users\EMVIGO-USER\Muhassin\workspace\claude-investigation\emi` →
+  `C--Users-EMVIGO-USER-Muhassin-workspace-claude-investigation-emi`).
+- **Fallback** when that folder does not exist (for example, Claude Code shortened a very
+  long path): scan the folders under `<config dir>/projects/` and keep those whose first
+  entry carrying a `cwd` field has a `cwd` equal to a project path. The result is cached for
+  the server's lifetime.
+- Each session: `<folder>/<session id>.jsonl` (main session) and
+  `<folder>/<session id>/subagents/agent-<id>.jsonl` plus `agent-<id>.meta.json`
+  (`agentType`, `description`, `toolUseId`, `spawnDepth`).
+
+### 6.2 Runs
+
+- **Run start:** a main-session entry with `type: "user"`, `isSidechain: false`, whose
+  message text matches
+  `<command-name>/?(?:sdlc-pipeline:)?(pipeline|pipeline-all|pipeline-parallel|pipeline-ui)</command-name>`.
+  Runs started directly with an existing flow are listed too.
+- **Run end:** the next run start in the same session, or the end of the file.
+- **Run id:** `<session id>:<line number of the start entry>`.
+- **Flow:** the matched command name. For `pipeline-ui`, the flow is the name in the first
+  `Skill` tool call to `sdlc-pipeline:pipeline*` after the start; until that call exists the
+  flow shows as `choosing…`.
+- **Title:** the first line of `<command-args>`, cut to 120 characters (`(no request text)`
+  if empty).
+- **Branch:** the `gitBranch` of the latest entry in the window that is not the base branch;
+  else the base branch.
+- **Linked runs:** runs on the same non-base branch are shown as parts of one feature
+  ("resumed from <run>").
+
+### 6.3 Agents
+
+- An agent belongs to the run whose window contains the main-session `Agent` tool call with
+  id = the agent's `toolUseId`. If that call is not found, the agent's first timestamp
+  decides.
+- Agents with `spawnDepth` > 1 are listed under the agent that spawned them.
+- Per agent: type (without the `sdlc-pipeline:` prefix), description, model (the most common
+  `message.model`, ignoring `<synthetic>`), first and last timestamp, duration, usage
+  (section 7), state:
+  - **finished:** the last assistant entry has `stop_reason: "end_turn"`;
+  - **running:** otherwise, and the file was written in the last 10 minutes;
+  - **interrupted:** otherwise.
+
+### 6.4 Stages
+
+The stage of an agent comes from its type:
+
+| Agent type | Stage |
+|---|---|
+| `requirements-writer` | R — Requirements |
+| `requirement-analyst`, `gap-analysis-agent`, `story-generation-agent` | Q — BA analysis |
+| `distiller` | 0.8 — Distil |
+| `planner` | 1 — Plan |
+| `investigator` | 1-B — Investigate |
+| `ceo-reviewer`, `eng-reviewer`, `design-reviewer` | 2 — Plan review |
+| `adr-writer` | 2.7 — ADR |
+| `implementer` | 3 — Build (see the rule below) |
+| `unit-tester` | 4 — Unit tests |
+| `qa-tester` | 4.5 — QA |
+| `code-reviewer`, `security-reviewer` | 5 — Code + security review |
+| `perf-tester` | 5.5 — Performance |
+| `doc-writer` | 5.8 — Docs |
+| `acceptance-verifier` | 5.85 — Acceptance |
+| `ship-pr` | 6 — Ship |
+| any other type | Other (shown in the stage reached at the time) |
+
+- **Fix rounds:** an `implementer` that starts after an agent of a later stage has started
+  belongs to that later stage, labelled `fix`. (In the EMI run, an implementer after the
+  acceptance verifier is an acceptance fix, not Build.)
+- **Stages per flow:** `pipeline-all` shows R, Q, 0.8, 1, 2, 2.7, 3, 4, 4.5, 5, 5.5, 5.8,
+  5.85, 6. `pipeline` and `pipeline-parallel` show 0.8, 1 or 1-B, 2, 2.7, 3, 4, 4.5, 5, 5.5,
+  5.8, 6.
+- **Stage state:**
+  - **in progress:** it has a running agent, or it is the latest stage with agents and the
+    run's status (section 8) is *running*;
+  - **done:** it has agents and is not in progress (so at plan approval, Plan review shows
+    done while the run waits for the client);
+  - **skipped:** it has no agents and a later stage has agents;
+  - **not reached:** otherwise.
+- **Checkpoints** (section 6.5) are placed on the timeline by time, between stages.
+
+The table lives in `stages.py` as data, so a new agent type is a one-line change.
+
+### 6.5 Checkpoints
+
+- Every main-session `AskUserQuestion` tool call in the run window, with time, header,
+  question text and option labels.
+- **Answer:** the text of the matching `tool_result`. If that result is an error (the
+  client answered in chat instead, as happens in the desktop app), the answer is the first
+  300 characters of the next user message, marked `answered in chat`.
+- No result yet: **pending**.
+
+### 6.6 Tasks and changes
+
+- **Plan folder:** `docs/plans/<slug>/`, where `<slug>` is the branch name after its first
+  `/` (`feature/calculate-emi` → `calculate-emi`). Tasks are the `task-NN-<name>.md` files.
+- **Base:** `git merge-base <base> <branch>`, where base is `master` or `main`, whichever
+  exists (`main` if both do).
+- **Commits:** `git log --format=%H%x09%aI%x09%s <merge-base>..<branch>`. A commit belongs to
+  task `NN` when its subject matches `\btask[ -]?0*<N>\b` (case-insensitive), where `<N>` is
+  the task number without leading zeros, so `task 03`, `Task 3` and `task-03` all match task
+  `03`. Others are listed as "other commits".
+- **Bug track:** for a `fix/` or `hotfix/` branch with no plan folder, the investigator's
+  mini-plan (`docs/bugs/<slug>*.md`) is shown in place of the task list, and every commit is
+  listed under it.
+- **Diff:** `git show --stat --patch --no-color <sha>`, cut at 1 MB with a `truncated`
+  notice.
+
+### 6.7 Artifacts
+
+Links are offered only for files that exist from this list (paths relative to the repo):
+
+- `docs/plans/<slug>/00-overview.md` and the task files, or on the bug track
+  `docs/bugs/<slug>*.md`;
+- the requirements file, from the `--requirements` argument of the run's first
+  `sdlc-pipeline:ba-run` Skill call, and its artifact root
+  (`<requirements dir>/ba/<stem without .requirements>/`), from which:
+  `stories/detailed_stories.md`, `acceptance/acceptance-report.md`, and any `*.html` file
+  under the artifact root.
+
+## 7. Usage and cost
+
+- Usage is read from `message.usage` on assistant entries. **Each `message.id` is counted
+  once**, because Claude Code can write several entries for one response with the same
+  usage repeated.
+- Four numbers are kept separately: input, output, cache write (`cache_creation_input_tokens`)
+  and cache read (`cache_read_input_tokens`). The page shows all four, plus their total.
+- Rows: one per agent, plus an **orchestrator** row for the main session's own usage within
+  the run window. The run total is their sum.
+- **Estimated cost** = tokens × the model's rates in `pipeline-ui-prices.json` (USD per
+  million tokens for input, output, cache write 5m, cache write 1h, cache read). Cache writes
+  are split by `cache_creation.ephemeral_5m_input_tokens` and
+  `ephemeral_1h_input_tokens` when present, else priced as 5m. The shipped values are copied
+  from the Anthropic pricing reference (the `claude-api` skill) when this is implemented.
+  The page labels it "estimate".
+- Models missing from the table (including `<synthetic>`) show tokens and `—` for cost.
+
+## 8. Run status
+
+Checked in this order:
+
+1. **finished:** a `ship-pr` agent in the run is finished.
+2. **stopped:** the run's window was closed by a later run in the same session.
+3. **waiting for you:** a checkpoint is pending.
+4. **running:** any of the run's agents is running (6.3), or the main-session file was
+   written in the last 2 minutes and its last entry in the window is not an assistant entry
+   with `stop_reason: "end_turn"`. (Agents can keep working in the background after the
+   orchestrator's turn ends, so this check comes before rule 5.)
+5. **waiting for you:** the last main-session entry in the window is an assistant entry with
+   `stop_reason: "end_turn"` (the turn ended and the next move is the client's, for example
+   "type Continue now").
+6. **stopped:** otherwise (the session was closed or interrupted mid-turn).
+
+Both *waiting for you* rules show how long it has waited (`waiting for you · 3 h`).
+
+## 9. Server
+
+### 9.1 CLI
+
+- `start --project <path> [--open]`: if a server for this project is already healthy,
+  reuse it. Otherwise spawn `serve` as a detached process (`DETACHED_PROCESS` on Windows,
+  `start_new_session` elsewhere), wait up to 5 s for `/api/health`, then print the JSON line
+  from 5.1. `--open` opens the URL with `webbrowser`.
+- `serve --project <path> --port <n>`: run the server in the foreground.
+- `stop --project <path>`: stop that project's server.
+- `status --project <path>`: print its JSON line, or `{"running": false}`.
+
+### 9.2 State and lifecycle
+
+- State file: `<config dir>/sdlc-pipeline/ui/<first 12 hex of sha1(repo root)>.json` with
+  `pid`, `port`, `project`, `started_at`. It is the only file the dashboard writes, and it is
+  outside the repository.
+- Reuse check: `GET /api/health` on the stored port returns the same `project`.
+- Port: 8765 first, then the next 19 ports. If none is free, `start` returns
+  `{"error": "no free port in 8765-8784"}`.
+- Idle shutdown: after 2 hours with no HTTP request, the server exits and deletes its state
+  file. `stop` does the same immediately.
+
+### 9.3 HTTP API (all `GET`, JSON unless noted)
+
+| Path | Returns |
+|---|---|
+| `/` | `pipeline-ui.html` |
+| `/api/health` | `project`, plugin version, `pid` |
+| `/api/runs` | Run list: id, flow, title, branch, status, started, duration, token total, estimated cost, linked run ids |
+| `/api/runs/<id>` | Run view: the above plus stages, agents, checkpoints, tasks with commits, artifact keys, read warnings (section 10) |
+| `/api/diff?run=<id>&commit=<sha>` | Text of the diff |
+| `/api/file?run=<id>&key=<key>` | One artifact from 6.7 |
+
+### 9.4 Reading efficiently
+
+Each transcript file is read incrementally: the server keeps, per file, its size, the byte
+offset already parsed and the summary built so far, and on each request parses only new
+bytes. A file that shrank or was replaced (size smaller than the offset) is re-read from the
+start. The plan folder and git results are cached for 5 seconds.
+
+## 10. The page
+
+- **Runs list** (newest first): started, flow, title, branch, status badge, duration, total
+  tokens, estimated cost. Linked runs are grouped under their branch.
+- **Run view:**
+  - header: title, flow, branch, status, duration, total tokens, estimated cost;
+  - stage timeline across the top, with checkpoints between stages;
+  - agents table: stage, type, description, model, start, duration, the four token
+    numbers, estimated cost, state; sortable by cost and by duration;
+  - checkpoints: time, question, answer (or pending);
+  - tasks: each task file with its commits; "show diff" expands the diff inline, with added
+    and removed lines coloured;
+  - artifacts: links that open the file as text (`.md`, `.json`) or in a new tab (`.html`).
+- **Refresh:** every 3 seconds while the run is *running* or *waiting for you*; every 30
+  seconds otherwise. A small "updated 2 s ago" line shows freshness.
+- Follows the system light or dark setting. No fonts, scripts or styles from the internet,
+  so it works offline.
+- **Empty state:** "No pipeline runs found for <repo>. Looked in: <folders>."
+
+## 11. Errors and edge cases
+
+- **Transcript format changes:** the transcript format is not a documented contract and may
+  change between Claude Code versions. Readers skip lines that are not valid JSON and ignore
+  entry types and fields they do not know. The run view shows a warning line, for example
+  `12 lines could not be read · Claude Code 2.1.312`, taking the version from the entries'
+  `version` field.
+- A missing subagent `meta.json` → the agent shows type `unknown`.
+- No git, or the branch was deleted → tasks are listed without commits; the diff button is
+  hidden.
+- A plan folder that is not there yet → the tasks section says "No plan yet".
+- One reader failing must not break the page: each section of `/api/runs/<id>` is built
+  separately, and a failure becomes that section's `error` field, shown in place.
+
+## 12. Security
+
+- Binds to `127.0.0.1` only. Never `0.0.0.0`.
+- Every endpoint is read-only. The only file written is the state file (9.2).
+- `/api/diff` accepts only a 40-character hex sha that is in that run's commit list; git is
+  called with an argument list, never through a shell.
+- `/api/file` accepts only keys from that run's artifact list (6.7); there is no path
+  parameter. Resolved paths must stay inside the repository.
+- HTML artifacts are served with `Content-Security-Policy: sandbox`.
+- Every response sets `Cache-Control: no-store`, so transcript content is not cached by the
+  browser.
+
+## 13. Testing
+
+Standard library `unittest`, like `tests/acceptance`:
+`python -I -m unittest discover -s tests/pipeline-ui`.
+
+- **Fixtures** (hand-written, shaped like the 2026-10-29 EMI run, no real content): a project
+  transcript folder with
+  - a session holding two runs (one `/pipeline-ui` that hands off to `pipeline-all`, one
+    plain `/pipeline`);
+  - subagents covering every stage in 6.4, an implementer after the acceptance verifier
+    (fix round), one running agent, one interrupted agent, one with no `meta.json`, one
+    nested (`spawnDepth` 2);
+  - checkpoints answered normally, answered in chat after an error result, and pending;
+  - repeated entries with the same `message.id`, an invalid JSON line, an unknown entry
+    type, and `<synthetic>` model entries.
+- **Unit tests per module:** path encoding and the fallback scan; run windows, flow and title;
+  agent attribution by `toolUseId` and by time; the stage table, fix rounds and per-flow stage
+  lists; stage states; checkpoint answers; usage de-duplication and the four token numbers;
+  cost with 5m/1h cache writes and unknown models; each status rule in order, with file
+  times faked; commit-to-task matching; artifact discovery.
+- **Git reader** against a temporary repo built in `setUp` (base branch, feature branch,
+  commits mentioning `task 01`, `Task-02` and `task 3`, one with no task), plus a `fix/`
+  branch with a `docs/bugs/` mini-plan and no plan folder.
+- **Security tests:** `/api/diff` rejects a sha outside the run; `/api/file` rejects an
+  unknown key; the server is bound to `127.0.0.1`.
+- **Smoke test:** start `serve` on a free port against the fixtures, call `/api/health`,
+  `/api/runs` and `/api/runs/<id>`, check the shapes, stop it.
+- **Manual check** before shipping: run `/pipeline-ui` on a small feature (the EMI demo) in
+  the Claude Code CLI and the desktop app, and watch the dashboard through a full run.
+
+## 14. Release
+
+- README: a "Watching a run" section with what `/pipeline-ui` does, the stop command, where
+  the data comes from, that nothing leaves the machine, and the Cursor limitation.
+- Version 3.4.1 → 3.5.0 in the three version fields.
+
+## 15. Risks
+
+| Risk | Mitigation |
+|---|---|
+| A Claude Code update changes the transcript format | Tolerant readers and a visible warning (11). Fixtures make breakage easy to locate and fix. |
+| Stage shown wrongly for a new agent type or a new flow step | Stage table is data in one place (6.4); unknown types go to "Other" rather than failing. |
+| Cost estimate drifts from real billing | Labelled "estimate"; prices in an editable file. |
+| The server is left running | Idle shutdown after 2 hours; `stop` command. |
+| Large transcripts make polling slow | Incremental reads (9.4). |
