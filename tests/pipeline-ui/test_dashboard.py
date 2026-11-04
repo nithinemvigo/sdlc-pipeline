@@ -6,7 +6,9 @@ import unittest
 from unittest import mock
 
 import fixture_builder as fb
+from pipeline_ui import agents as agents_mod
 from pipeline_ui import gitinfo, usage
+from pipeline_ui import runs as runs_mod
 from pipeline_ui.dashboard import Dashboard
 from pipeline_ui.timeutil import parse_ts
 
@@ -107,6 +109,157 @@ class DashboardTest(unittest.TestCase):
         os.makedirs(other, exist_ok=True)
         data = Dashboard(other, cfg=os.path.join(self.tmp, "nocfg")).runs()
         self.assertEqual(data, {"project": os.path.abspath(other), "folders": [], "runs": []})
+
+
+def _session(session_id, branch, minute, version="2.1.312", name="pipeline", args="Do it"):
+    t = fb.Transcript(session_id=session_id, cwd="C:/plain", branch=branch, version=version)
+    t.command(minute, name, args)
+    return t
+
+
+class DashboardRobustnessTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.repo = fb.make_git_repo(os.path.join(cls.tmp, "repo"))
+        cls.cfg = os.path.join(cls.tmp, "cfg")
+        cls.ids = fb.emi_like(cls.cfg, cls.repo)
+        fb.write_session(cls.cfg, cls.repo, _session("sess-bad", "master", 60))
+        cls.now = parse_ts(fb.ts(70))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def dash(self):
+        return Dashboard(self.repo, cfg=self.cfg, prices=usage.load_prices(), clock=lambda: self.now)
+
+    def _find_runs_failing_for_bad(self):
+        real = runs_mod.find_runs
+
+        def find_runs(session_id, entries):
+            if session_id == "sess-bad":
+                raise ValueError("corrupt")
+            return real(session_id, entries)
+        return mock.patch("pipeline_ui.runs.find_runs", side_effect=find_runs)
+
+    def test_one_unreadable_subagent_is_skipped_and_reported(self):
+        real = agents_mod.Agent
+
+        def agent(agent_id, *args, **kwargs):
+            if agent_id == "a-pl":
+                raise RuntimeError("bad agent")
+            return real(agent_id, *args, **kwargs)
+        with mock.patch("pipeline_ui.agents.Agent", side_effect=agent):
+            dash = self.dash()
+            by_id = dict((r["id"], r) for r in dash.runs()["runs"])
+            detail = dash.run(self.ids["run1"])
+        message = "1 subagent file(s) could not be read: a-pl: RuntimeError: bad agent"
+        self.assertEqual(by_id[self.ids["run1"]]["errors"], {"agents": message})
+        self.assertEqual(by_id[self.ids["run2"]]["errors"], {"agents": message})
+        self.assertEqual(by_id[self.ids["run1"]]["status"], "finished")
+        rows = dict((r["id"], r) for r in detail["agents"])
+        self.assertEqual(len(rows), 14)  # the other agents and the orchestrator are kept
+        self.assertNotIn("a-pl", rows)
+        self.assertEqual(detail["errors"], {"agents": message})
+        self.assertTrue(detail["stages"])
+
+    def test_unreadable_session_becomes_a_placeholder(self):
+        with self._find_runs_failing_for_bad():
+            dash = self.dash()
+            data = dash.runs()
+            ids = [r["id"] for r in data["runs"]]
+            self.assertEqual(sorted(ids), sorted([self.ids["run1"], self.ids["run2"], "sess-bad:error"]))
+            self.assertEqual(ids[-1], "sess-bad:error")  # started None sorts last
+            placeholder = data["runs"][-1]
+            self.assertEqual(placeholder, {
+                "id": "sess-bad:error", "session": "sess-bad", "command": None, "flow": "",
+                "title": "Could not read session sess-bad", "branch": "", "started": None, "status": "error",
+                "waiting_since": None, "duration_s": None, "tokens": usage.Usage().to_dict(), "cost": None,
+                "cost_complete": False, "linked": [], "resumed_from": None,
+                "errors": {"session": "ValueError: corrupt"}})
+            run1 = [r for r in data["runs"] if r["id"] == self.ids["run1"]][0]
+            self.assertEqual((run1["status"], run1["flow"]), ("finished", "pipeline-all"))
+            self.assertEqual(dash.run("sess-bad:error"), placeholder)
+            self.assertIsNone(dash.diff("sess-bad:error", "abc"))
+            self.assertIsNone(dash.file("sess-bad:error", "plan-overview"))
+            self.assertTrue(dash.run(self.ids["run1"])["stages"])
+
+    def test_failing_agent_assignment_builds_runs_without_agents(self):
+        with mock.patch("pipeline_ui.agents.assign_agents", side_effect=RuntimeError("nope")):
+            dash = self.dash()
+            summary = [r for r in dash.runs()["runs"] if r["id"] == self.ids["run1"]][0]
+            detail = dash.run(self.ids["run1"])
+        self.assertEqual(summary["errors"], {"agents": "RuntimeError: nope"})
+        self.assertEqual([r["id"] for r in detail["agents"]], ["orchestrator"])
+        self.assertEqual(detail["errors"], {"agents": "RuntimeError: nope"})
+        self.assertTrue(detail["stages"])
+
+
+class DashboardScenarioTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.cfg = os.path.join(self.tmp, "cfg")
+        self.plain = os.path.join(self.tmp, "plain")
+        os.makedirs(self.plain)
+        self.now = parse_ts(fb.ts(90))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def dash(self, repo=None):
+        return Dashboard(repo or self.plain, cfg=self.cfg, prices=usage.load_prices(), clock=lambda: self.now)
+
+    def test_runs_on_the_same_branch_are_linked(self):
+        for session_id, branch, minute in (("s-a", "feature/calculate-emi", 0), ("s-b", "feature/calculate-emi", 10),
+                                           ("s-c", "master", 20)):
+            fb.write_session(self.cfg, self.plain, _session(session_id, branch, minute))
+        by_session = dict((r["session"], r) for r in self.dash().runs()["runs"])
+        first, second, base = by_session["s-a"], by_session["s-b"], by_session["s-c"]
+        self.assertEqual((first["resumed_from"], first["linked"]), (None, [second["id"]]))
+        self.assertEqual((second["resumed_from"], second["linked"]), (first["id"], [first["id"]]))
+        self.assertEqual((base["resumed_from"], base["linked"]), (None, []))
+
+    def test_an_empty_folder_list_is_retried(self):
+        dash = self.dash()
+        self.assertEqual(dash.runs(), {"project": os.path.abspath(self.plain), "folders": [], "runs": []})
+        fb.write_session(self.cfg, self.plain, _session("s-late", "feature/x", 0))
+        data = dash.runs()
+        self.assertEqual(data["folders"], [fb.project_folder(self.cfg, self.plain)])
+        self.assertEqual([r["session"] for r in data["runs"]], ["s-late"])
+
+    def test_without_git_the_tasks_say_so(self):
+        fb.write_session(self.cfg, self.plain, _session("s-nogit", "feature/x", 0))
+        dash = self.dash()
+        tasks = dash.run(dash.runs()["runs"][0]["id"])["tasks"]
+        self.assertFalse(tasks["git"])
+        self.assertEqual((tasks["tasks"], tasks["other_commits"]), ([], []))
+
+    def test_git_results_are_cached_for_five_seconds(self):
+        repo = fb.make_git_repo(os.path.join(self.tmp, "repo"))
+        fb.write_session(self.cfg, repo, _session("s-git", "feature/calculate-emi", 0))
+        dash = self.dash(repo)
+        run_id = dash.runs()["runs"][0]["id"]
+
+        def commit_count():
+            tasks = dash.run(run_id)["tasks"]
+            return sum(len(t["commits"]) for t in tasks["tasks"]) + len(tasks["other_commits"])
+        with mock.patch("pipeline_ui.dashboard.time.monotonic") as clock:
+            clock.return_value = 1000.0
+            self.assertEqual(commit_count(), 5)
+            fb.write_file(repo, "extra.py", "e = 1\n")
+            fb.git(repo, "add", "-A")
+            fb.git(repo, "commit", "-q", "-m", "feat: extra")
+            clock.return_value = 1004.0
+            self.assertEqual(commit_count(), 5)  # still inside the 5 s window
+            clock.return_value = 1006.0
+            self.assertEqual(commit_count(), 6)
+
+    def test_warning_without_a_version(self):
+        t = _session("s-nover", "master", 0, version=None)
+        t.raw("{not json")
+        fb.write_session(self.cfg, self.plain, t)
+        dash = self.dash()
+        d = dash.run(dash.runs()["runs"][0]["id"])
+        self.assertEqual(d["warnings"], ["1 line could not be read \u00b7 Claude Code version unknown"])
 
 
 if __name__ == "__main__":

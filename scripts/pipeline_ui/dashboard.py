@@ -43,12 +43,14 @@ class Dashboard(object):
     def run(self, run_id):
         with self.lock:
             item = self._find(run_id)
-            return self._detail(item) if item else None
+            if not item:
+                return None
+            return dict(item["summary"]) if item["run"] is None else self._detail(item)
 
     def diff(self, run_id, sha):
         with self.lock:
             item = self._find(run_id)
-            if not item:
+            if not item or item["run"] is None:
                 return None
             if sha not in set(c["sha"] for c in (self._commits(item["run"].branch) or [])):
                 return None
@@ -57,7 +59,7 @@ class Dashboard(object):
     def file(self, run_id, key):
         with self.lock:
             item = self._find(run_id)
-            if not item:
+            if not item or item["run"] is None:
                 return None
             run = item["run"]
             items = artifacts.artifact_list(self.repo, artifacts.slug_of(run.branch), run.entries)
@@ -74,17 +76,43 @@ class Dashboard(object):
         items = []
         for folder in self.folders():
             for session_id, path in transcripts.list_sessions(folder):
-                main = self.cache.get(path)
-                found = runs_mod.find_runs(session_id, main.entries)
-                if not found:
-                    continue
-                loaded = self._load_agents(folder, session_id, agents_mod.notified_ids(main.entries), now)
-                by_run = agents_mod.assign_agents(found, loaded)
-                for run in found:
-                    items.append(self._build(run, by_run.get(run.run_id, []), main, now))
+                items.extend(self._session_items(folder, session_id, path, now))
         self._link(items)
         items.sort(key=lambda item: item["summary"]["started"] or "", reverse=True)
         return items
+
+    def _session_items(self, folder, session_id, path, now):
+        try:
+            main = self.cache.get(path)
+            found = runs_mod.find_runs(session_id, main.entries)
+        except Exception as exc:  # an unreadable session must not hide the others
+            return [self._placeholder(session_id, exc)]
+        if not found:
+            return []
+        loaded, skipped = self._load_agents(folder, session_id, main, now)
+        agents_error = None
+        try:
+            by_run = agents_mod.assign_agents(found, loaded)
+        except Exception as exc:
+            by_run, agents_error = {}, _error(exc)
+        if skipped:
+            agents_error = "%d subagent file(s) could not be read: %s" % (len(skipped), skipped[0])
+        items = []
+        for run in found:
+            item = self._build(run, by_run.get(run.run_id, []), main, now)
+            if agents_error:
+                item["summary"]["errors"] = dict(item["summary"].get("errors") or {}, agents=agents_error)
+            items.append(item)
+        return items
+
+    def _placeholder(self, session_id, exc):
+        summary = {"id": "%s:error" % session_id, "session": session_id, "command": None, "flow": "",
+                   "title": "Could not read session %s" % session_id, "branch": "", "started": None,
+                   "status": "error", "waiting_since": None, "duration_s": None,
+                   "tokens": usage_mod.Usage().to_dict(), "cost": None, "cost_complete": False,
+                   "linked": [], "resumed_from": None, "errors": {"session": _error(exc)}}
+        return {"run": None, "agents": [], "main": None, "checkpoints": [], "orchestrator": {},
+                "summary": summary}
 
     def _find(self, run_id):
         for item in self._collect():
@@ -92,14 +120,26 @@ class Dashboard(object):
                 return item
         return None
 
-    def _load_agents(self, folder, session_id, notified, now):
-        loaded = []
-        for agent_id, path, meta_path in transcripts.subagent_files(folder, session_id):
-            jsonl = self.cache.get(path)
-            agent = agents_mod.Agent(agent_id, transcripts.read_meta(meta_path), jsonl.entries, jsonl.mtime, path=path)
-            agent.status = agents_mod.agent_state(jsonl.entries, jsonl.mtime, now, notified=agent_id in notified)
+    def _load_agents(self, folder, session_id, main, now):
+        """Returns (agents, skipped); a subagent file that cannot be read is skipped and described."""
+        notified = agents_mod.notified_ids(main.entries)
+        loaded, skipped = [], []
+        try:
+            files = list(transcripts.subagent_files(folder, session_id))
+        except Exception as exc:
+            return loaded, ["subagent folder: %s" % _error(exc)]
+        for agent_id, path, meta_path in files:
+            try:
+                jsonl = self.cache.get(path)
+                agent = agents_mod.Agent(agent_id, transcripts.read_meta(meta_path), jsonl.entries, jsonl.mtime,
+                                         path=path)
+                agent.status = agents_mod.agent_state(jsonl.entries, jsonl.mtime, now,
+                                                      notified=agent_id in notified)
+            except Exception as exc:
+                skipped.append("%s: %s" % (agent_id, _error(exc)))
+                continue
             loaded.append(agent)
-        return loaded
+        return loaded, skipped
 
     def _build(self, run, run_agents, main, now):
         item = {"run": run, "agents": run_agents, "main": main, "checkpoints": [], "orchestrator": {}}
