@@ -215,3 +215,82 @@ def make_git_repo(path):
     git(path, "commit", "-q", "-m", "fix: rounding")
     git(path, "checkout", "-q", "feature/calculate-emi")
     return path
+
+
+def emi_like(cfg, repo, mtime=None):
+    """Two runs in one session, shaped like the 2026-10-29 EMI run.
+
+    Run 1: /pipeline-ui -> pipeline-all, an agent for every stage it reaches, a fix round after the
+    acceptance verifier, an unknown agent without meta, a nested agent, a notification-only finish,
+    two questions (one answered in chat), a duplicated response, one invalid line. Shipped.
+    Run 2: /pipeline on master, one pending question.
+    Every file gets mtime = ts(45) unless given.
+    """
+    mtime = parse_ts(ts(45)) if mtime is None else mtime
+    s = Transcript(session_id="sess-emi", cwd=repo, branch="master")
+    s.command(0, "pipeline-ui", "Add calculate_emi(principal, annual_rate, months)\nRound half up.")
+    run1_line = len(s.lines)
+    s.tool_use(1, "Skill", {"skill": "sdlc-pipeline:pipeline-all", "args": "Add calculate_emi"}, "tu-skill")
+    s.tool_result(1, "tu-skill", "Launching skill: sdlc-pipeline:pipeline-all")
+    dispatched = []
+
+    def dispatch(minute, agent_id, agent_type, description, tool_use_id):
+        s.tool_use(minute, "Agent", {"subagent_type": "sdlc-pipeline:" + agent_type, "description": description},
+                   tool_use_id)
+        s.tool_result(minute, tool_use_id, "Async agent launched successfully.\nagentId: %s" % agent_id)
+        dispatched.append((agent_id, agent_type, description, tool_use_id, minute))
+
+    dispatch(2, "a-rw", "requirements-writer", "Draft EMI requirements", "tu-rw")
+    s.tool_use(4, "AskUserQuestion", {"questions": [{"header": "Requirements", "question": "Approve the requirements?",
+                                                     "options": [{"label": "Approve"}, {"label": "Change"}]}]}, "tu-q1")
+    s.tool_result(4, "tu-q1", 'User has answered your questions: "Approve the requirements?"="Approve". '
+                              "You can now continue.", second=30)
+    s.tool_use(5, "Skill", {"skill": "sdlc-pipeline:ba-run",
+                            "args": "--requirements docs/features/calculate-emi.requirements.md"}, "tu-ba")
+    s.tool_result(5, "tu-ba", "Launching skill: sdlc-pipeline:ba-run")
+    dispatch(6, "a-ra", "requirement-analyst", "Decompose atomic requirements", "tu-ra")
+    dispatch(8, "a-pl", "planner", "Plan EMI feature", "tu-pl")
+    dispatch(10, "a-ceo", "ceo-reviewer", "CEO plan review", "tu-ceo")
+    dispatch(10, "a-eng", "eng-reviewer", "Eng plan review", "tu-eng")
+    s.tool_use(12, "AskUserQuestion", {"questions": [{"header": "Plan", "question": "Approve the plan?",
+                                                      "options": [{"label": "Approve"}]}]}, "tu-q2")
+    s.tool_result(12, "tu-q2", "Tool result missing due to internal error", is_error=True)
+    s.user(12, "<task-notification>\n<task-id>a-eng</task-id>\n<status>completed</status>\n</task-notification>",
+           second=40, origin={"kind": "task-notification"})
+    s.user(13, "<system-reminder>context</system-reminder>Approve it")
+    s.branch = "feature/calculate-emi"
+    dispatch(14, "a-i1", "implementer", "Implement task 01 scaffolding", "tu-i1")
+    dispatch(16, "a-i2", "implementer", "Implement task 02 validation", "tu-i2")
+    dispatch(18, "a-cr", "code-reviewer", "Code review of branch", "tu-cr")
+    dispatch(18, "a-sr", "security-reviewer", "Security review of branch", "tu-sr")
+    dispatch(20, "a-av", "acceptance-verifier", "Verify acceptance criteria", "tu-av")
+    dispatch(22, "a-fix", "implementer", "Fix US-003.2", "tu-fix")
+    dispatch(24, "a-oth", "general-purpose", "Look something up", "tu-oth")
+    dispatch(26, "a-ship", "ship-pr", "Ship the PR", "tu-ship")
+    s.text(28, "Shipped.", message_id="msg-dup", usage=tokens(1000, 0))
+    s.text(28, "Shipped.", message_id="msg-dup", usage=tokens(1000, 0))
+    s.raw("{not json")
+    s.raw(json.dumps({"type": "queue-operation", "operation": "enqueue", "version": "2.1.312"}))
+    s.branch = "master"
+    s.command(40, "pipeline", "Fix rounding")
+    run2_line = len(s.lines)
+    s.tool_use(41, "AskUserQuestion", {"questions": [{"header": "Type", "question": "Feature or bug?",
+                                                      "options": [{"label": "Bug"}]}]}, "tu-q3")
+    write_session(cfg, repo, s, mtime=mtime)
+
+    for agent_id, agent_type, description, tool_use_id, minute in dispatched:
+        if agent_id == "a-eng":  # finished only by the main session's task notification
+            t = Transcript(session_id=s.session_id, cwd=repo, sidechain=True, agent_id=agent_id)
+            t.user(minute + 1, "Review the plan.")
+            t.tool_use(minute + 1, "Read", {"file_path": "plan.md"}, "tu-a-eng-1", model="claude-haiku-5-5")
+            t.tool_result(minute + 1, "tu-a-eng-1", "ok")
+        else:
+            t = finished_agent(agent_id, minute + 1, session_id=s.session_id, cwd=repo,
+                               usage=tokens(100, 50, cache_read=1000, write_5m=200) if agent_id == "a-pl" else None,
+                               synthetic=agent_id == "a-ra", spawn="tu-nested" if agent_id == "a-pl" else None)
+        write_agent(cfg, repo, s.session_id, t, "sdlc-pipeline:" + agent_type, description, tool_use_id,
+                    meta=agent_id != "a-oth", mtime=mtime)
+    nested = finished_agent("a-nest", 10, session_id=s.session_id, cwd=repo)
+    write_agent(cfg, repo, s.session_id, nested, "Explore", "Find the formula", "tu-nested", spawn_depth=2,
+                mtime=mtime)
+    return {"session": s.session_id, "run1": "sess-emi:%d" % run1_line, "run2": "sess-emi:%d" % run2_line}
