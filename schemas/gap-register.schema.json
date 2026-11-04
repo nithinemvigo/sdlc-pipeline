@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gap Register",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "gap_id": {
+        "type": "string",
+        "pattern": "^GAP-[0-9]{3,}$"
+      },
+      "priority": {
+        "type": "string",
+        "enum": ["Critical", "High", "Medium", "Low"]
+      },
+      "status": {
+        "type": "string",
+        "enum": ["open", "skipped", "resolved"]
+      },
+      "gap_definition": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      },
+      "decisions_recorded": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "recorded_at": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "required": ["decision", "recorded_at"],
+          "additionalProperties": false
+        }
+      },
+      "affected_requirements": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "requirement_id": {
+              "type": "string",
+              "pattern": "^REQ-[0-9]{3,}$"
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            }
+          },
+          "required": ["requirement_id", "description"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "gap_id",
+      "priority",
+      "status",
+      "gap_definition",
+      "decisions_recorded",
+      "affected_requirements"
+    ],
+    "additionalProperties": false
+  }
+}

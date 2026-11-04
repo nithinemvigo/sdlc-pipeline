@@ -1,6 +1,6 @@
 # sdlc-pipeline
 
-An autonomous SDLC orchestrator plugin for Claude Code, Claude Cowork, and Cursor. One command — `/pipeline` — takes a feature or bug from raw request to shipped PR through planning, review gauntlets, TDD execution, testing gates, security review, docs, and ship.
+An autonomous SDLC orchestrator plugin for Claude Code, Claude Cowork, and Cursor. Three commands — `/pipeline`, `/pipeline-parallel` and `/pipeline-all` — take a feature or bug from raw request to shipped PR through planning, review gauntlets, TDD execution, testing gates, security review, docs, and ship.
 
 Built on top of **superpowers**, **gstack**, and **claude-mem** — all three are required and must be installed first (see [Prerequisites](#prerequisites)).
 
@@ -8,8 +8,9 @@ Built on top of **superpowers**, **gstack**, and **claude-mem** — all three ar
 
 | Component | Count | Purpose |
 |---|---|---|
-| Commands | 1 | `/pipeline` — the end-to-end orchestrator |
-| Agents | 14 | Specialist sub-agents: planner, investigator, implementer, reviewers (code, security, eng, design, CEO, perf), unit-tester, qa-tester, adr-writer, doc-writer, ship-pr |
+| Commands | 12 | `/pipeline` (features and bugs), `/pipeline-parallel` (parallel task waves), `/pipeline-all` (requirements-first, features only), and the BA requirements analysis: `/ba-run` (all phases) plus `/ba-start-analysis`, `/ba-analyse-gaps`, `/ba-triage-gaps`, `/ba-generate-stories`, `/ba-enrich-stories`, `/ba-sync-stories`, `/ba-generate-report`, and `/verify-acceptance` (checks a finished build against every acceptance criterion in the stories, report-only) |
+| Agents | 20 | Specialist sub-agents: requirements-writer, BA analysts (requirement-analyst, gap-analysis-agent, story-generation-agent), distiller, planner, investigator, implementer, reviewers (code, security, eng, design, CEO), perf-tester, unit-tester, qa-tester, acceptance-verifier, adr-writer, doc-writer, ship-pr |
+| Skills | 9 | BA analysis skills (requirement decomposition, gap identification/prioritisation/triage, story generation/enrichment, acceptance-criteria design, source discovery, quality validation) |
 | Hooks | 2 | Token tracking and per-run token reports |
 
 The orchestrator never writes production code itself. It classifies your request, dispatches specialist agents, enforces quality gates, and only interrupts you for genuine decisions.
@@ -140,6 +141,16 @@ Bugs skip the planner: the `investigator` agent does root-cause analysis and pro
 
 Nano changes skip planning and reviews entirely: `implementer` → `code-reviewer` → `ship-pr`. Fast path, still reviewed.
 
+### Example 4 — start from an idea (requirements first)
+
+```
+/sdlc-pipeline:pipeline-all Let sales managers export filtered contact lists as CSV
+```
+
+`/pipeline-all` is for features only. It first turns your idea (text, or a file path such as `docs/ideas/export.md`) into a requirements document based on the plugin's template, and asks you only about major gaps. You approve the document or ask for changes. A QA step runs next, and from the testing questions onward the run is the same as Example 1.
+
+The requirements agent asks you only about major gaps (purpose, users, scope, main flow, security, other systems it connects to), then writes `docs/features/<slug>.requirements.md` from the plugin's template for you to approve or change. A feature that is genuinely too big for one run is split — only after you approve the split — into a few independent parts in `docs/features/<slug>/`, each complete on its own; each run builds one part, and once that PR is merged and deployed you run the next part with the command the run gives you. Next, the BA requirements analysis (Stage Q) breaks the approved requirements into atomic requirements, finds and ranks gaps, asks you about each gap (every Critical and High gap must be answered), and writes development stories with acceptance criteria: lean stories are appended to the requirements file, and the detailed stories (full acceptance criteria, edge cases, test data) go to `ba/<name>/stories/detailed_stories.md`, with an HTML report under `docs/features/.../ba/<name>/report/`. If you pause, run the same command again to resume. The planner then builds from the requirements and the detailed stories. Before the PR, an acceptance gate (Stage 5.85, the `acceptance-verifier` agent) checks that every acceptance criterion in the stories is proven by the build; you can also run it on its own with `/sdlc-pipeline:verify-acceptance <requirements file>`. BA folders created by an earlier plugin version (BA v0.5.1) are reconciled automatically on the next Stage Q run.
+
 ## Workflow
 
 ```
@@ -168,6 +179,23 @@ Stage 6    Ship PR (via gstack /ship)
 
 `∥` = stages run in parallel. Token usage is tracked per run by the bundled hooks.
 
+`/pipeline-all` runs a requirements-first version of the feature track:
+
+```
+idea (text and/or files)
+   │
+   ▼
+Stage -1   Preflight
+Stage 0    Bug guard (bugs → /pipeline)
+Stage R    Requirements (requirements-writer) ── ★ YOU APPROVE THE REQUIREMENTS ★
+Stage Q    BA analysis (ba-run): atomic requirements → gaps → triage with you → stories
+Stage 0.5  Your preferences: TDD, unit tests
+Stage 0.8  Requirements → contract (distil if large, else copy)
+Stage 1 →  Same as the FEATURE track above (plan, reviews, ★ plan approval ★, build, gates, docs)
+Stage 5.85 Acceptance gate (acceptance-verifier): every story criterion proven, before the PR
+Stage 6    Ship PR (via gstack /ship)
+```
+
 ## Hard rules the pipeline enforces
 
 - No production code before you approve the plan (Stage 2.5 is a hard gate).
@@ -178,3 +206,7 @@ Stage 6    Ship PR (via gstack /ship)
 ## License
 
 MIT — free to use, modify, and distribute. See [`LICENSE`](LICENSE).
+
+## Credits
+
+The BA requirements analysis (`/ba-*` commands, the three BA agents, their skills, rules, schemas and scripts) is by the QA/BA team ([akhilvn-crypto/BA-Pipeline](https://github.com/akhilvn-crypto/BA-Pipeline), MIT), copied from v0.8.1 and adapted here to run inside `/pipeline-all` — see [`licenses/ba-requirements-LICENSE`](licenses/ba-requirements-LICENSE).

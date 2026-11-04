@@ -1,0 +1,43 @@
+{
+  "stories": [
+    {
+      "story_id": "US-001",
+      "summary": "Reset password by email",
+      "lean_acceptance_criteria": ["lean one"],
+      "detailed": {
+        "description": "As a user I reset my password.",
+        "preconditions": [],
+        "functional_behaviour": [],
+        "business_rules": [],
+        "acceptance_criteria": [
+          "Unknown email addresses are rejected with a generic message",
+          "A reset link expires after 30 minutes"
+        ],
+        "scenarios": [],
+        "non_functional_requirements": [],
+        "dependencies": []
+      },
+      "source_requirement_ids": ["REQ-001", "REQ-002"],
+      "applied_decisions": []
+    },
+    {
+      "story_id": "US-002",
+      "summary": "Audit every reset",
+      "lean_acceptance_criteria": [],
+      "detailed": {
+        "description": "As an admin I see resets.",
+        "preconditions": [],
+        "functional_behaviour": [],
+        "business_rules": [],
+        "acceptance_criteria": ["Each reset writes an audit record"],
+        "scenarios": [],
+        "non_functional_requirements": [],
+        "dependencies": []
+      },
+      "source_requirement_ids": ["REQ-003"],
+      "applied_decisions": []
+    }
+  ],
+  "not_covered_requirements": [],
+  "decisions_reviewed": []
+}
