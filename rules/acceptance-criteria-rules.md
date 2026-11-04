@@ -9,7 +9,7 @@ Every criterion is:
 1. **Specific and unambiguous.** Two testers would read it the same way. Numbers, limits and durations are stated, not implied.
 2. **Testable.** There is an observable result: something the system does, shows, stores, rejects or prevents.
 3. **Relevant** to its own story, **consistent** with the source requirements and with confirmed decisions, and **non-duplicative** (no two criteria in a story say the same thing).
-4. **Supported.** It follows from a requirement or a resolved gap's latest decision. Do not invent behaviour to make a story look comprehensive.
+4. **Supported.** It follows from a requirement or a resolved gap's latest decision. Do not invent behaviour to make a story look comprehensive. The only derived content is the valueless baseline security entries described in `security-baseline-rules.md`; they live in the story's Non-Functional Requirements, not in the criteria.
 
 ## Detailed criteria (plain text)
 
@@ -35,7 +35,7 @@ These apply to the ultra-lean version only, which is derived from the detailed s
 
 ## What to consider (only where the requirements support it)
 
-Successful behaviour, invalid input, failure outcomes, boundary conditions, permissions, business constraints, error handling, security and privacy expectations. If the requirements say nothing about a category, say nothing; do not fill the silence.
+Successful behaviour, invalid input, failure outcomes, boundary conditions, permissions, business constraints, error handling, security and privacy expectations. If the requirements say nothing about a category, say nothing in the criteria; do not fill the silence. Security is the exception: the baseline controls are always derived into the Non-Functional Requirements (`security-baseline-rules.md`), and a criterion is added for one only when a requirement or confirmed decision states it.
 
 ## Unresolved and resolved gaps
 

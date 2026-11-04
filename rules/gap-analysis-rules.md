@@ -11,6 +11,7 @@
 7. **Complete traceability.** Every gap lists all materially affected requirements. Each entry carries the exact `requirement_id` and `description` from `atomic_requirements/atomic_requirements.json`. Every gap has at least one.
 8. **One priority.** Exactly one of `Critical`, `High`, `Medium`, `Low`, assigned with `skills/gap-prioritisation/SKILL.md`. No rationale field in the register.
 9. **No decisions, stories or criteria.** Gap analysis never resolves a gap, records a decision, writes user stories or writes acceptance criteria.
+10. **Security parameters.** Security is always in scope, whether or not the requirements mention it. Story generation derives the valueless baseline controls itself (`rules/security-baseline-rules.md`), so a gap is not raised because security is unmentioned. Raise a gap when a requirement involves authentication, access control, sessions or tokens, sensitive data or audit and the business value its behaviour depends on (a limit, duration, policy, role, retention period) is stated nowhere in the requirements. Rules 3 and 5 still apply: the gap asks, it never proposes the value, and one undecided policy is one gap. Other quality attributes are not chased: no gap is raised for performance, availability or accessibility merely because no target is stated.
 
 ## Register contract
 

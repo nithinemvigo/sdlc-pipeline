@@ -90,6 +90,9 @@ def descr(req_id):
     return next(r["description"] for r in REQUIREMENTS if r["requirement_id"] == req_id)
 
 
+BASELINE = "Security (baseline): Every request is authorised on the server against the actor's role and ownership."
+
+
 def make_gap(gap_id, priority, definition, req_ids, status="open", decisions=None):
     return {
         "gap_id": gap_id, "priority": priority, "status": status, "gap_definition": definition,
@@ -104,6 +107,7 @@ def make_story(summary, lean, sources, story_id=None, applied=None, **detail):
         "description": f"As a user, I want to {summary.lower()}, so that I can achieve the outcome.",
         "functional_behaviour": [f"The system supports: {summary}."],
         "acceptance_criteria": [f"The system completes a request to {summary.lower()}."],
+        "non_functional_requirements": [BASELINE],
     }
     detailed.update(detail)
     return {
@@ -129,7 +133,7 @@ def standard_stories():
                    acceptance_criteria=["A registered user who submits valid credentials is authenticated.",
                                         "A login attempt with invalid credentials is rejected."],
                    scenarios=["An unknown email address is rejected with the same response as a wrong password."],
-                   non_functional_requirements=["Login completes within 2 seconds under normal load."]),
+                   non_functional_requirements=[BASELINE, "Login completes within 2 seconds under normal load."]),
         make_story("Password Reset", ["Registered users can reset their password by email."], ["REQ-002"],
                    description="As a registered user, I want to reset my password by email so that I can regain access to my account.",
                    acceptance_criteria=["A reset request from a registered user sends a reset message to the registered email address."]),
@@ -398,6 +402,20 @@ class ConsolidatedDetailedStoriesTests(ProjectCase):
                          [("US-001", "User Login"), ("US-002", "Password Reset"), ("US-003", "Session Timeout"),
                           ("US-004", "Audit Log"), ("US-005", "Report Export"), ("US-006", "Profile Update")])
 
+    def test_baseline_security_entries_are_saved_in_the_detailed_file_only(self):
+        self.generate()
+        detailed = self.read_detailed()
+        self.assertEqual(detailed.count(BASELINE), 6)
+        self.assertIn("**Non-Functional Requirements:**\n- " + BASELINE, detailed)
+        self.assertNotIn("Security (baseline)", read_text(self.doc))
+        self.assertNotIn("Security (baseline)", flat(read_text(self.doc)))
+        # The saved stories read back and re-applying them changes nothing.
+        draft, _ = self.export_draft()
+        self.assertEqual([BASELINE in s["detailed"]["non_functional_requirements"] for s in draft["stories"]], [True] * 6)
+        code, result = self.run_sync("apply", "--draft", self.write_draft(draft["stories"], name="again.json"))
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["detailed_changed"], [])
+
     def test_every_story_has_the_same_field_order_and_empty_optional_fields_are_left_out(self):
         self.generate()
         order = ["Description", "Preconditions", "Functional Behaviour", "Business Rules", "Acceptance Criteria",
@@ -413,11 +431,11 @@ class ConsolidatedDetailedStoriesTests(ProjectCase):
         self.assertEqual(re.findall(r"^\*\*([^*]+):\*\*", first, re.M),
                          ["Description", "Preconditions", "Functional Behaviour", "Business Rules", "Acceptance Criteria",
                           "Alternate and Error Scenarios", "Non-Functional Requirements"])
-        self.assertIn("**Non-Functional Requirements:**\n- Login completes within 2 seconds under normal load.", first)
+        self.assertIn("**Non-Functional Requirements:**\n- " + BASELINE + "\n- Login completes within 2 seconds under normal load.", first)
         self.assertIn("**Preconditions:**\n- The user has a registered account.", first)
         self.assertIn("**Acceptance Criteria:**\n1. A registered user who submits valid credentials is authenticated.", first)
         self.assertIn("\n2. A login attempt with invalid credentials is rejected.", first)
-        self.assertEqual(re.findall(r"^\*\*([^*]+):\*\*", blocks[1], re.M), ["Description", "Functional Behaviour", "Acceptance Criteria"])
+        self.assertEqual(re.findall(r"^\*\*([^*]+):\*\*", blocks[1], re.M), ["Description", "Functional Behaviour", "Acceptance Criteria", "Non-Functional Requirements"])
         self.assertNotIn("Not specified.", self.read_detailed())
         self.assertNotIn("Given ", self.read_detailed())
         self.assertNotIn("REQ-", self.read_detailed())
@@ -471,7 +489,7 @@ class ConsolidatedDetailedStoriesTests(ProjectCase):
         again = common.render_detailed_document([common.render_detailed(detailed.stories[i]) for i in detailed.order])
         self.assertEqual(again, self.read_detailed())
         draft, _ = self.export_draft()
-        self.assertEqual(draft["stories"][0]["detailed"]["non_functional_requirements"], ["Login completes within 2 seconds under normal load."])
+        self.assertEqual(draft["stories"][0]["detailed"]["non_functional_requirements"], [BASELINE, "Login completes within 2 seconds under normal load."])
         self.assertEqual(draft["stories"][0]["lean_acceptance_criteria"],
                          ["Registered users can log in using valid credentials, and invalid credentials are rejected with the defined error response."])
 
@@ -982,8 +1000,50 @@ class ValidationTests(ProjectCase):
         self.assertTrue(any("every functional behaviour item is a quality attribute" in e for e in errors), errors)
 
     def test_non_functional_requirements_stay_in_the_detailed_story_without_error(self):
-        errors, warnings = self.check(lambda d: d["stories"][0]["detailed"].__setitem__("non_functional_requirements", ["Every action can be completed with the keyboard alone.", "Form fields are labelled."]))
+        errors, warnings = self.check(lambda d: d["stories"][0]["detailed"].__setitem__("non_functional_requirements", [BASELINE, "Every action can be completed with the keyboard alone.", "Form fields are labelled."]))
         self.assertEqual((errors, warnings), ([], []))
+
+    def test_the_security_baseline_rules_exist_and_are_referenced_by_the_agents_and_skills(self):
+        plugin = PLUGIN_ROOT
+        rules = read_text(os.path.join(plugin, "rules", "security-baseline-rules.md"))
+        self.assertIn("Security (baseline): ", rules)
+        for relative in ("agents/story-generation-agent.md", "agents/gap-analysis-agent.md", "skills/story-generation/SKILL.md",
+                         "skills/gap-identification/SKILL.md", "rules/gap-analysis-rules.md", "rules/story-writing-rules.md",
+                         "rules/acceptance-criteria-rules.md"):
+            self.assertIn("security-baseline-rules.md", read_text(os.path.join(plugin, *relative.split("/"))), relative)
+        # No example entry in the rules file may carry a value.
+        for entry in re.findall(r"`(Security \(baseline\): [^`]+)`", rules):
+            self.assertIsNone(re.search(r"\d", entry), entry)
+
+    def test_a_new_story_without_baseline_security_draws_a_warning_only(self):
+        errors, warnings = self.check(lambda d: d["stories"][1]["detailed"].__setitem__("non_functional_requirements", ["Form fields are labelled."]))
+        self.assertEqual(errors, [])
+        self.assertEqual(len([w for w in warnings if "Security (baseline):" in w and "no 'Security (baseline):' entry" in w]), 1)
+
+        def drop_all(draft):
+            del draft["stories"][1]["detailed"]["non_functional_requirements"]
+        errors, warnings = self.check(drop_all)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("no 'Security (baseline):' entry" in w for w in warnings))
+
+    def test_an_existing_story_without_baseline_security_is_not_flagged(self):
+        def existing(draft):
+            story = draft["stories"][1]
+            story["story_id"] = "US-002"
+            story["detailed"]["non_functional_requirements"] = []
+            draft["stories"][0]["story_id"] = "US-001"
+        errors, warnings = self.check(existing)
+        self.assertFalse(any("Security (baseline)" in w for w in warnings), warnings)
+
+    def test_a_baseline_security_entry_with_a_number_draws_a_warning_only(self):
+        entry = "Security (baseline): The account is locked after 5 failed attempts."
+        errors, warnings = self.check(lambda d: d["stories"][0]["detailed"].__setitem__("non_functional_requirements", [BASELINE, entry]))
+        self.assertEqual(errors, [])
+        self.assertTrue(any("contains a number" in w and entry in w for w in warnings), warnings)
+        # A security rule the requirements state, written without the prefix, is not a baseline entry and may carry its values.
+        errors, warnings = self.check(lambda d: d["stories"][0]["detailed"].__setitem__("non_functional_requirements", [BASELINE, "The account is locked after 5 failed attempts."]))
+        self.assertEqual((errors, warnings), ([], []))
+
 
     def test_the_documented_lean_checks_also_apply_to_the_saved_document(self):
         story = {"story_id": "US-001", "summary": "Log in", "acceptance_criteria": ["Given a, when b, then c.", "Login responds within 2 seconds."]}

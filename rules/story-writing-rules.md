@@ -60,6 +60,7 @@ Rules:
 3. **A non-functional requirement is never a story of its own.** Performance, availability, accessibility (keyboard use, labelled fields, readable errors), usability, compliance, scalability and similar quality attributes are written into the Non-Functional Requirements of every functional story they constrain (a requirement that applies to all forms goes in each story with a form), and the requirement is listed in those stories' sources. They never appear in the requirements document: not as a story, not in a summary and not in a lean criterion. A system story ("As the system, I must ...") is only for functional system behaviour that no user story carries (for example a scheduled job or a notification), never for a quality attribute.
 4. Do not copy requirement IDs, gap IDs or decision metadata into the story text. Say what the rule is, not where it came from.
 5. Preserve conditions, limits and values exactly as the requirements and decisions state them.
+6. **Baseline security is always derived.** Whether or not the requirements mention security, every new story gets the baseline security entries its functional behaviour calls for, written into its Non-Functional Requirements with the prefix `Security (baseline): ` and without any invented value. This is the one exception to rule 1; the method, the exact prefix and the limits are in `security-baseline-rules.md`. A security rule the requirements or a resolved decision state is written as stated instead. Other quality attributes are included only when stated.
 
 ### Dependencies
 
@@ -75,6 +76,7 @@ Rules:
 2. One short, plain sentence per item. No background narrative, filler or repeated wording.
 3. Leave an optional field out when the requirements say nothing for it. Alternate and Error Scenarios is for flow notes no criterion already states.
 4. Leaner never means less: every confirmed rule, value, limit, exception, security condition and non-functional target stays in the story.
+5. **Length target:** 150-250 words per detailed story, preferably within 300. Reach it by removing repetition, unnecessary explanation and duplicated information, never by omitting, oversimplifying or inventing requirements. Exceed 300 words only when needed for completeness, clarity and testability. **Completeness takes priority over brevity.**
 
 The draft format that carries both representations is in `schemas/development-stories.schema.json` and `skills/story-generation/SKILL.md`. Supply plain text only: no numbering, no bullets, no headings and no `**Label:**` lines inside a field.
 

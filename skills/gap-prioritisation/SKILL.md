@@ -23,6 +23,7 @@ Every gap gets exactly one of `Critical`, `High`, `Medium`, `Low`. Priority meas
 3. Consider whether the gap blocks meaningful implementation or verification, or only a corner of it.
 4. Pick the lowest priority whose definition fully fits the impact. Move up only for a stated reason.
 5. Do not assign Critical or High merely because the requirement is in a familiar high-risk domain (authentication, payments, personal data). A cosmetic question about a login page is not Critical.
+   - Exception by impact, not by domain: a missing security parameter (a limit, duration, policy, role or retention period) that the protection of credentials, access control, sessions or sensitive data depends on is at least High. It is Critical when its absence leaves the capability open to account takeover, unauthorised access or exposure of sensitive data.
 6. Be consistent: two gaps with the same kind of impact get the same priority.
 7. Be ready to explain the choice in one sentence. Give the rationale in your analysis response or execution summary. Do not store it: the persisted gap object has no rationale field.
 
@@ -33,6 +34,7 @@ Every gap gets exactly one of `Critical`, `High`, `Medium`, `Low`. Priority meas
 | Lock-out policy after failed logins | Critical | Open to credential attacks; security exposure across authentication. |
 | Maximum payment amount per transaction | Critical | Financial risk; the capability is unsafe without a limit. |
 | Which roles may approve a request | High | Core business rule; the workflow cannot be built reliably without it. |
+| Inactivity limit after which a session ends | High | Security parameter; the protection of logged-in accounts depends on it. |
 | Behaviour when an export exceeds the size limit | Medium | Important edge case; the core export is understood. |
 | Whether the confirmation page shows the order date | Low | Minor refinement. |
 

@@ -25,6 +25,7 @@ Read these files from the plugin root, in full, and follow them:
 2. `rules/artifact-management-rules.md` (Phase 1 rules; the atomic requirements are read only)
 3. `skills/gap-identification/SKILL.md`
 4. `skills/gap-prioritisation/SKILL.md`
+5. `rules/security-baseline-rules.md` (to know which security controls are already derived and which need a business value)
 
 Any Markdown file you must read completely: read it in `offset`/`limit` chunks of at most 200 lines, continuing until a chunk returns fewer lines than requested, or none — that is the end of the file. Never run `wc`, `stat`, `du`, `cat`, `Get-Content` or `Measure-Object` on a Markdown file (this plugin's context-budget hook blocks it). Rules, skills and JSON files under 250 lines may be read in one call.
 
@@ -32,6 +33,7 @@ Any Markdown file you must read completely: read it in `offset`/`limit` chunks o
 
 - Read every atomic requirement and consider it against the dimensions in the identification skill, together with the requirements related to it.
 - Identify genuine gaps, consolidate symptoms of one missing decision into one gap, and keep unrelated decisions apart.
+- Run the security parameters pass from the identification skill: raise a gap for each security decision that needs a business value no requirement states, and none for an unmentioned control, which story generation derives as baseline (`rules/security-baseline-rules.md`). Do not raise gaps for other quality attributes merely because no target is stated.
 - Assign exactly one priority per gap using the prioritisation skill, and be able to state the rationale.
 - Map every materially affected requirement, copying its `requirement_id` and `description` exactly from the atomic requirements file.
 - In `reconcile` mode, match new findings to existing gaps by meaning, keep matched IDs, decisions and statuses, add genuinely new gaps with new IDs, and flag existing gaps whose requirements changed or disappeared.

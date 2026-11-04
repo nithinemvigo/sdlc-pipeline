@@ -123,6 +123,25 @@ def non_functional_errors(label, summary, criteria, behaviours):
     return found
 
 
+SECURITY_BASELINE_PREFIX = "Security (baseline):"
+
+
+def security_baseline_warnings(label, non_functional, is_new):
+    """Advisory warnings for the baseline security entries (rules/security-baseline-rules.md).
+
+    Every new story is expected to carry the baseline entries its behaviour calls for. Existing stories are not
+    flagged here: adding to them is proposed to the user, not done silently. A baseline entry states a control
+    without any business value, so a digit in one is flagged as a probable invented value."""
+    found = []
+    baseline = [item for item in non_functional if item.lower().startswith(SECURITY_BASELINE_PREFIX.lower())]
+    if is_new and not baseline:
+        found.append(f"{label}: no '{SECURITY_BASELINE_PREFIX}' entry in the Non-Functional Requirements. Security is always derived; add the baseline entries this story's behaviour calls for, or say in the report why none applies.")
+    for item in baseline:
+        if re.search(r"\d", item):
+            found.append(f"{label}: the baseline security entry '{item}' contains a number. A baseline entry states a control without an invented value; a value is a business decision (gap or confirmed decision).")
+    return found
+
+
 def gherkin_criteria(criteria):
     return [number for number, item in enumerate(criteria, start=1) if _GHERKIN_RE.match(item)]
 
@@ -368,6 +387,7 @@ def validate_draft(draft, requirements, register):
         if not re.search(r"\bas an?\b", canon_detail["description"], re.IGNORECASE):
             warnings.append(f"{label}: the detailed description does not use the 'As a ..., I want ..., so that ...' form; use a neutral formulation only when the actor or value is unclear.")
         warnings.extend(lean_warnings(label, canon_lean["summary"], canon_lean["acceptance_criteria"], include_nfr=False))
+        warnings.extend(security_baseline_warnings(label, canon_detail["non_functional_requirements"], story_id is None))
         errors.extend(non_functional_errors(label, canon_lean["summary"], canon_lean["acceptance_criteria"], canon_detail["functional_behaviour"]))
         for number in gherkin_criteria(canon_detail["acceptance_criteria"]):
             warnings.append(f"{label}: detailed criterion {number} is written as Given/When/Then; write it as a plain statement of the condition and the expected outcome.")

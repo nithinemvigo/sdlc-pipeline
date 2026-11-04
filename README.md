@@ -209,4 +209,4 @@ MIT — free to use, modify, and distribute. See [`LICENSE`](LICENSE).
 
 ## Credits
 
-The BA requirements analysis (`/ba-*` commands, the three BA agents, their skills, rules, schemas and scripts) is by the QA/BA team ([akhilvn-crypto/BA-Pipeline](https://github.com/akhilvn-crypto/BA-Pipeline), MIT), copied from v0.7.5 and adapted here to run inside `/pipeline-all` — see [`licenses/ba-requirements-LICENSE`](licenses/ba-requirements-LICENSE).
+The BA requirements analysis (`/ba-*` commands, the three BA agents, their skills, rules, schemas and scripts) is by the QA/BA team ([akhilvn-crypto/BA-Pipeline](https://github.com/akhilvn-crypto/BA-Pipeline), MIT), copied from v0.8.1 and adapted here to run inside `/pipeline-all` — see [`licenses/ba-requirements-LICENSE`](licenses/ba-requirements-LICENSE).
