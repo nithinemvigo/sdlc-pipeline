@@ -508,11 +508,60 @@ def check_bash(payload) -> None:
     )
 
 
+# --- Scope gate -------------------------------------------------------------
+# The plugin registers this hook for every Read/Bash call in every session, but the rules
+# only make sense inside a pipeline run. Outside one they just block ordinary work (large
+# files, screenshots, repeat reads). So: allow everything unless a pipeline is active.
+PIPELINE_MARKER_MAX_AGE_S = 12 * 3600  # a ledger untouched for 12h is a finished/abandoned run
+
+
+def pipeline_active(payload) -> bool:
+    """True when this call belongs to a pipeline run.
+
+    Signals, any one is enough:
+      * SDLC_GUARD=1 forces the guard on, SDLC_GUARD=0 forces it off.
+      * the caller is a plugin sub-agent (agent_type "sdlc-pipeline:<role>").
+      * a pipeline ledger was written recently at or above the working directory:
+        `docs/plans/<slug>/.pipeline-state.md` or `.ba-requirements/pipeline-state.json`.
+    """
+    force = os.environ.get("SDLC_GUARD")
+    if force == "1":
+        return True
+    if force == "0":
+        return False
+
+    if "sdlc-pipeline" in agent_of(payload).replace("_", "-").lower():
+        return True
+
+    import glob
+    import time
+
+    here = os.path.abspath(payload.get("cwd") or os.getcwd())
+    now = time.time()
+    for _ in range(6):  # cwd and up to five parents
+        candidates = glob.glob(os.path.join(here, "docs", "plans", "*", ".pipeline-state.md"))
+        candidates.append(os.path.join(here, ".ba-requirements", "pipeline-state.json"))
+        for marker in candidates:
+            try:
+                if now - os.path.getmtime(marker) <= PIPELINE_MARKER_MAX_AGE_S:
+                    return True
+            except OSError:
+                pass
+        parent = os.path.dirname(here)
+        if parent == here:
+            break
+        here = parent
+    return False
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
     except Exception:
         allow()  # never break the session on a malformed payload
+
+    if not pipeline_active(payload):
+        allow()  # not a pipeline run: stay out of the way (and out of the audit log)
 
     tool = payload.get("tool_name")
     if tool in ("Bash", "PowerShell"):
