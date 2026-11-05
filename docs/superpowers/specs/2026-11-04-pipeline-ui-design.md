@@ -60,17 +60,24 @@ Arguments: `[--flow pipeline-all|pipeline|pipeline-parallel] <the request, as fo
 
 1. **One Bash call** (a short script in the command file) that resolves three things and
    starts the dashboard with `<python> "<root>/scripts/pipeline-ui.py" start --project <project> --open`:
-   - **root:** `${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}`; when that is empty (Claude Code's
-     Bash tool sets neither), the newest version folder, by `sort -V`, under
-     `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/*/sdlc-pipeline/*/` that contains
-     `scripts/pipeline-ui.py`. None → `{"error": "plugin folder not found"}`.
-   - **Python:** the first of `python3`, `python` for which
-     `-c 'import sys; sys.exit(sys.version_info < (3, 8))'` succeeds, so the Windows Store
+   - **Python** (first, because the root lookup uses it): the first of `python3`, `python` for
+     which `-c 'import sys; sys.exit(sys.version_info < (3, 8))'` succeeds, so the Windows Store
      `python3` stub is skipped. None → `{"error": "python 3.8+ not found"}`.
+   - **root**, in this order:
+     1. `${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}` (Claude Code's Bash tool sets neither today);
+     2. the installed version: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json`
+        (version 2, `{"plugins": {"sdlc-pipeline@<marketplace>": [{"installPath", "version"}, ...]}}`),
+        the `installPath` of an `sdlc-pipeline@*` entry that contains `scripts/pipeline-ui.py`,
+        the highest `version` if there are several;
+     3. only when that file is missing, unreadable or has no usable entry: the newest version
+        folder under `.../plugins/cache/*/sdlc-pipeline/*/` that contains the script.
+
+     The JSON parsing and the numeric version order run in the chosen Python (`-I -c`), not in
+     `sort -V`, which BSD/macOS `sort` lacks. None → `{"error": "plugin folder not found"}`.
    - **project:** `git rev-parse --show-toplevel`, else `pwd -W` (Git Bash), else `pwd`.
 
    It prints one JSON line: `{"url": ..., "pid": ..., "reused": true|false}`, or
-   `{"error": ...}`. The URL carries the per-launch key (`?t=<key>`, 9.3).
+   `{"error": ...}`. The URL carries the per-launch key in its fragment (`/#k=<key>`, 9.3).
 2. **One line to the client:** `Dashboard: <url>` (or `Dashboard not started: <error> — continuing without it.`).
    A failed start never blocks the run.
 3. **Flow choice.** If `--flow` was given, use it. Otherwise one `AskUserQuestion`:
@@ -279,7 +286,10 @@ Both *waiting for you* rules show how long it has waited (`waiting for you · 3 
 - `start --project <path> [--open]`: if a server for this project is already healthy,
   reuse it. Otherwise spawn `serve` as a detached process (`DETACHED_PROCESS` on Windows,
   `start_new_session` elsewhere), wait up to 5 s for `/api/health`, then print the JSON line
-  from 5.1. `--open` opens the URL with `webbrowser`.
+  from 5.1. `--open` does not pass the URL to the browser (on Linux a process's argv is
+  readable by other users): it writes `<ui dir>/<digest>-open.html` (0600 on POSIX), a
+  meta-refresh and a link to the `#k=` URL, and opens that file's `file://` URI. The file is
+  rewritten on each start and deleted by `stop` and by the server's own cleanup.
 - `serve --project <path> --port <n>`: run the server in the foreground.
 - `stop --project <path>`: stop that project's server.
 - `status --project <path>`: print its JSON line, or `{"running": false}`.
@@ -289,8 +299,12 @@ Both *waiting for you* rules show how long it has waited (`waiting for you · 3 
 - State file: `<config dir>/sdlc-pipeline/ui/<first 12 hex of sha1(repo root)>.json` with
   `pid`, `port`, `project`, `token` (the per-launch key, 9.3) and `started_at`; created 0600 on
   POSIX (on Windows the user profile's ACL protects it). The server also writes its log next
-  to it (`<same name>.log`, the detached process's stderr). These are the only files the
-  dashboard writes, and they are outside the repository.
+  to it (`<same name>.log`, the detached process's stderr), and `start --open` writes the
+  redirect file `<same name>-open.html` (9.1). These are the only files the dashboard writes,
+  and they are outside the repository.
+- A state file whose `token` is missing or not a non-empty string is stale: it is removed and
+  treated as no state, and its server is never probed or stopped. `start` then starts a fresh
+  server (possibly on the next port); `stop` and `status` return `{"running": false}`.
 - Reuse check: `GET /api/health` on the stored port, sent with the stored key, returns the same
   `project`. A server that does not accept the key is not ours: it is never reused and never
   stopped. A healthy server from another plugin version is stopped and a new one started.
@@ -306,24 +320,35 @@ Both *waiting for you* rules show how long it has waited (`waiting for you · 3 
 
 ### 9.3 HTTP API (all `GET`, JSON unless noted)
 
-Every endpoint needs the per-launch key. `start` prints and opens `http://127.0.0.1:<port>/?t=<key>`;
-`GET /?t=<key>` with the right key answers `303` to `/` with
-`Set-Cookie: pui_<port>=<key>; HttpOnly; SameSite=Strict; Path=/`, so the key leaves the address
-bar and the page's own requests carry the cookie. The CLI sends the header
-`X-Pipeline-UI-Token: <key>` instead. Without a valid cookie or header, `/` gets a 403 plain-text
-"Open the dashboard with the link /pipeline-ui printed (it includes a one-time key)." and `/api/*`
-gets a 403 `{"error": "missing or wrong dashboard key"}`. `HEAD`, `POST`, `PUT`, `DELETE` and
-`OPTIONS` get `405` (after the same checks).
+How the key travels: `start` prints `http://127.0.0.1:<port>/#k=<key>`. A fragment is never
+sent to a server and never appears in a Referer. On load the page moves the key to
+`sessionStorage` (per origin, so per port) and clears it from the address bar with
+`history.replaceState`; `#run=` routing then works as before. Every `fetch` sends
+`X-Pipeline-UI-Token: <key>`; the CLI sends the same header. There are no cookies.
+
+- `GET /` serves the page without a key; it holds no data and does not count as activity.
+- Every other request, `/api/health` included, needs the header (compared with
+  `hmac.compare_digest`), else `403 {"error": "missing or wrong dashboard key"}`. Without a
+  key, or on a 403, the page shows "Open the dashboard with the link /pipeline-ui printed (it
+  contains a one-time key)." instead of retrying.
+- HTML reports open in a new tab, which cannot send a header. The page asks
+  `/api/file-link?run=&key=` (with the header) for
+  `/api/file?run=<run>&key=<key>&exp=<now+60>&sig=<hex HMAC-SHA256(key, run "\n" file key "\n" exp)>`
+  and opens it with `window.open(url, "_blank", "noopener")`. `/api/file` accepts the header or
+  such a signature: constant-time compare, unexpired, `exp` at most 120 s ahead. The signature
+  covers the run and the file key, so it opens nothing else. Other files are fetched with the
+  header.
+- `HEAD`, `POST`, `PUT`, `DELETE` and `OPTIONS` get `405` (after the same Host and key checks).
 
 | Path | Returns |
 |---|---|
-| `/?t=<key>` | `303` to `/`, setting the cookie |
-| `/` | `pipeline-ui.html` |
+| `/` | `pipeline-ui.html` (no key needed) |
 | `/api/health` | `project`, plugin version, `pid` |
 | `/api/runs` | `project`, the transcript `folders` searched (for the empty state), and `runs`: id, flow, title, branch, status, started, duration, token total, estimated cost, linked run ids |
 | `/api/runs/<id>` | Run view: the above plus stages, agents, checkpoints, tasks with commits, artifact keys, read warnings (section 10) |
 | `/api/diff?run=<id>&commit=<sha>` | Text of the diff |
-| `/api/file?run=<id>&key=<key>` | One artifact from 6.7 |
+| `/api/file?run=<id>&key=<key>` | One artifact from 6.7 (header, or `&exp=&sig=` from `/api/file-link`) |
+| `/api/file-link?run=<id>&key=<key>` | `{"url": ...}`: a signed `/api/file` link valid for 60 s |
 
 ### 9.4 Reading efficiently
 
@@ -372,19 +397,31 @@ start. The plan folder and git results are cached for 5 seconds.
 - Requests whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>` get a 403,
   so a web page using DNS rebinding cannot read transcripts through the server.
 - **Per-launch key.** Each server generates `secrets.token_urlsafe(32)` and keeps it in its
-  state file. Every request needs it, compared with `hmac.compare_digest`: the browser gets it
-  once in the `/?t=` link and then sends the cookie `pui_<port>` (`HttpOnly`,
-  `SameSite=Strict`, `Path=/`; the port is in the name because cookies are not port-scoped and
-  two projects' dashboards must not overwrite each other); the CLI sends the
-  `X-Pipeline-UI-Token` header. Other local users and sandboxed processes that can reach the
-  loopback port therefore cannot read transcripts. The order is Host check, then the key, and
-  only then does the request count as activity, so refused requests do not keep an idle server
-  alive.
+  state file. Every data request needs it, compared with `hmac.compare_digest`. It travels in
+  the URL fragment (`/#k=`), then in `sessionStorage`, then in the `X-Pipeline-UI-Token`
+  header; the CLI sends the same header. Other local users and sandboxed processes that can
+  reach the loopback port therefore cannot read transcripts. The order is Host check, then the
+  key, and only then does the request count as activity, so refused requests do not keep an
+  idle server alive.
+- **No cookies.** A cookie for `127.0.0.1` is sent to every port on that host (RFC 6265 §8.5;
+  SameSite ignores ports), so another account's server on another port could collect it. The
+  dashboard sets none and accepts none.
+- **Signed links** for HTML reports: HMAC-SHA256 over run, file key and expiry, valid 60 s
+  (at most 120 s ahead), for `/api/file` only.
+- **Referrer-Policy: no-referrer** on every response.
+- **`--open` uses a redirect file** (0600 on POSIX) instead of putting the key on the
+  browser's command line.
+- **Residual risks:** the key appears in this Claude Code session's transcript (the JSON line
+  and `Dashboard: <url>`) and in the browser's history (the `#k=` URL), both the user's own
+  data; any process running as the same user can read the state file, the transcript or the
+  history, and so the key. The key protects against other accounts and web pages, not against
+  the user's own processes.
 - **No port sharing on Windows:** the server does not set `SO_REUSEADDR` there and sets
   `SO_EXCLUSIVEADDRUSE`, so no second socket can bind a port the dashboard is listening on.
 - The CLI's own health checks bypass any `HTTP_PROXY` setting.
 - Branch names read from transcripts are never passed to git if they start with `-`.
-- Every endpoint is read-only. The only files written are the state file and the log (9.2).
+- Every endpoint is read-only. The only files written are the state file, the log and the
+  `--open` redirect file (9.2).
 - BA requirements and artifact-root paths read from transcripts are ignored unless they are
   inside the repository; this is checked before any glob.
 - git is called with `--` after the `log` range and with `--no-textconv` for diffs.
@@ -399,8 +436,8 @@ start. The plan folder and git results are cached for 5 seconds.
   styles, fonts or connections, and builds every element with text nodes (no `innerHTML`),
   so transcript text can never run as markup.
 - Every response, including the standard library's own errors (400, 404, 501), sets
-  `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, so transcript content is not
-  cached by the browser.
+  `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: no-referrer`, so transcript content is not cached by the browser.
 
 ## 13. Testing
 
@@ -435,7 +472,8 @@ Standard library `unittest`, like `tests/acceptance`:
 ## 14. Release
 
 - README: a "Watching a run" section with what `/pipeline-ui` does, the stop command, where
-  the data comes from, that nothing leaves the machine, and the Cursor limitation.
+  the data comes from, that the dashboard sends nothing anywhere and the link's key is private,
+  and the Cursor limitation.
 - Version 3.4.1 → 3.5.0 in the three version fields.
 
 ## 15. Risks

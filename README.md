@@ -167,13 +167,16 @@ The dashboard refreshes every few seconds and shows:
 
 It is read-only and local. It reads the transcripts Claude Code already keeps under
 `~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR`), your git history and `docs/plans/`. It listens
-on `127.0.0.1` only, and nothing leaves your machine. Runs started with the other pipeline
+on `127.0.0.1` only and sends nothing anywhere. Runs started with the other pipeline
 commands appear too. Costs are estimates from `scripts/pipeline-ui-prices.json`, which you can
 edit.
 
-The printed link includes a one-time key (`?t=...`) that lets your browser in; keep it private,
-as anyone with the link can read this project's runs while the dashboard is running. The key
-changes every time the dashboard starts.
+The printed link includes a one-time key (`#k=...`) that lets your browser in. The page keeps
+it for that tab only and removes it from the address bar. The key also appears in this Claude
+Code session's transcript and in your browser history, so treat the link as private: anyone with
+it can read this project's runs while the dashboard is running. The key changes every time the
+dashboard starts. Opening the dashboard address without the key shows a note to use the printed
+link.
 
 It stops by itself after two hours with nobody viewing it. To stop it sooner, ask Claude to stop
 the pipeline dashboard: Claude runs the stop step from `/pipeline-ui`, which finds the plugin
