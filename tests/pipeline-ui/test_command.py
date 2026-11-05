@@ -120,6 +120,47 @@ class CommandScriptTest(unittest.TestCase):
         self.assert_called(self.run_block(self.blocks[0]), newest, "start")
         self.assert_called(self.run_block(self.blocks[1]), newest, "stop")
 
+    def installed(self, *entries):
+        """Writes plugins/installed_plugins.json (version 2) with sdlc-pipeline entries (marketplace, path, version)."""
+        plugins = {}
+        for marketplace, path, version in entries:
+            plugins.setdefault("sdlc-pipeline@" + marketplace, []).append(
+                {"scope": "user", "installPath": path, "version": version})
+        plugins["other@x"] = [{"scope": "user", "installPath": self.tmp, "version": "99.0.0"}]
+        folder = os.path.join(self.home, ".claude", "plugins")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "installed_plugins.json"), "w", encoding="utf-8") as fh:
+            json.dump({"version": 2, "plugins": plugins}, fh)
+
+    def test_installed_version_beats_newer_cache(self):
+        cache = os.path.join("home", ".claude", "plugins", "cache", "x", "sdlc-pipeline")
+        installed = self.fake_root(cache, "3.4.1")
+        self.fake_root(cache, "3.9.0")
+        self.installed(("x", installed, "3.4.1"))  # a native path, as Claude Code writes it
+        self.assert_called(self.run_block(self.blocks[0]), installed, "start")
+        self.assert_called(self.run_block(self.blocks[1]), installed, "stop")
+
+    def test_highest_installed_version_wins(self):
+        a = self.fake_root("market-a", "3.9.0")
+        b = self.fake_root("market-b", "3.10.0")
+        self.installed(("a", a, "3.9.0"), ("b", b, "3.10.0"))
+        self.assert_called(self.run_block(self.blocks[0]), b, "start")
+
+    def test_installed_entry_without_the_script_falls_back_to_the_cache(self):
+        cache = os.path.join("home", ".claude", "plugins", "cache", "x", "sdlc-pipeline")
+        old = os.path.join(self.tmp, "old-install")
+        os.makedirs(old)
+        newest = self.fake_root(cache, "3.10.0")
+        self.fake_root(cache, "3.9.0")
+        self.installed(("x", old, "3.11.0"))
+        self.assert_called(self.run_block(self.blocks[0]), newest, "start")
+
+    def test_unreadable_installed_file_falls_back_to_the_cache(self):
+        newest = self.fake_root("home", ".claude", "plugins", "cache", "x", "sdlc-pipeline", "3.5.0")
+        with open(os.path.join(self.home, ".claude", "plugins", "installed_plugins.json"), "w") as fh:
+            fh.write("{not json")
+        self.assert_called(self.run_block(self.blocks[0]), newest, "start")
+
     def test_claude_plugin_root_wins(self):
         self.fake_root("home", ".claude", "plugins", "cache", "x", "sdlc-pipeline", "3.5.0")
         explicit = self.fake_root("explicit")

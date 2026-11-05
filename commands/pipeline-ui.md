@@ -20,21 +20,37 @@ Run exactly this script, as one Bash call:
 
 ```bash
 if [ "${CLAUDECODE:-}" != "1" ]; then echo '{"error":"needs-claude-code"}'; else
-  R="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
-  if [ -z "$R" ]; then
-    R="$(for d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/sdlc-pipeline/*/; do [ -f "${d}scripts/pipeline-ui.py" ] && printf '%s %s\n' "$(basename "$d")" "${d%/}"; done | sort -V -k1,1 | tail -n 1 | cut -d ' ' -f 2-)"
-  fi
   PY=""; for c in python3 python; do if "$c" -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1; then PY="$c"; break; fi; done
-  if [ -z "$R" ] || [ ! -f "$R/scripts/pipeline-ui.py" ]; then echo '{"error":"plugin folder not found"}'
-  elif [ -z "$PY" ]; then echo '{"error":"python 3.8+ not found"}'
+  R="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
+  if [ -z "$R" ] && [ -n "$PY" ]; then R="$("$PY" -I -c '
+import glob, json, os, re, sys
+home = sys.argv[1]
+def version(text): return [int(n) for n in re.findall(r"[0-9]+", str(text))]
+def usable(path): return isinstance(path, str) and os.path.isfile(os.path.join(path, "scripts", "pipeline-ui.py"))
+found = []
+try:  # the installed version first
+    with open(os.path.join(home, "plugins", "installed_plugins.json"), encoding="utf-8") as fh:
+        plugins = json.load(fh)["plugins"]
+    found = [(version(e.get("version")), e["installPath"]) for name, entries in plugins.items()
+             if name.startswith("sdlc-pipeline@") and isinstance(entries, list)
+             for e in entries if isinstance(e, dict) and usable(e.get("installPath"))]
+except Exception:
+    found = []
+if not found:  # else the newest cached copy
+    pattern = os.path.join(glob.escape(home), "plugins", "cache", "*", "sdlc-pipeline", "*")
+    found = [(version(os.path.basename(p)), p) for p in glob.glob(pattern) if usable(p)]
+print(max(found)[1].replace(chr(92), "/") if found else "")
+' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" 2>/dev/null)"; fi
+  if [ -z "$PY" ]; then echo '{"error":"python 3.8+ not found"}'
+  elif [ -z "$R" ] || [ ! -f "$R/scripts/pipeline-ui.py" ]; then echo '{"error":"plugin folder not found"}'
   else "$PY" "$R/scripts/pipeline-ui.py" start --project "$(git rev-parse --show-toplevel 2>/dev/null || pwd -W 2>/dev/null || pwd)" --open; fi
 fi
 ```
 
-It finds the plugin folder (`CLAUDE_PLUGIN_ROOT`, else the newest installed copy under
-`~/.claude/plugins/cache/`), picks the first `python3` or `python` that is 3.8 or newer (so the
-Windows Store `python3` stub is skipped), prints one JSON line and returns at once; the dashboard
-keeps running in the background.
+It picks the first `python3` or `python` that is 3.8 or newer (so the Windows Store `python3`
+stub is skipped), finds the plugin folder (`CLAUDE_PLUGIN_ROOT`, else the installed version from
+`~/.claude/plugins/installed_plugins.json`, else the newest copy under `~/.claude/plugins/cache/`),
+prints one JSON line and returns at once; the dashboard keeps running in the background.
 
 ## Step 2 — Tell the client (one line, in the same turn as Step 3)
 
@@ -69,13 +85,29 @@ now, run this as one Bash call (the same lookup as Step 1, with `stop`):
 
 ```bash
 if [ "${CLAUDECODE:-}" != "1" ]; then echo '{"error":"needs-claude-code"}'; else
-  R="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
-  if [ -z "$R" ]; then
-    R="$(for d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/cache/*/sdlc-pipeline/*/; do [ -f "${d}scripts/pipeline-ui.py" ] && printf '%s %s\n' "$(basename "$d")" "${d%/}"; done | sort -V -k1,1 | tail -n 1 | cut -d ' ' -f 2-)"
-  fi
   PY=""; for c in python3 python; do if "$c" -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1; then PY="$c"; break; fi; done
-  if [ -z "$R" ] || [ ! -f "$R/scripts/pipeline-ui.py" ]; then echo '{"error":"plugin folder not found"}'
-  elif [ -z "$PY" ]; then echo '{"error":"python 3.8+ not found"}'
+  R="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}"
+  if [ -z "$R" ] && [ -n "$PY" ]; then R="$("$PY" -I -c '
+import glob, json, os, re, sys
+home = sys.argv[1]
+def version(text): return [int(n) for n in re.findall(r"[0-9]+", str(text))]
+def usable(path): return isinstance(path, str) and os.path.isfile(os.path.join(path, "scripts", "pipeline-ui.py"))
+found = []
+try:  # the installed version first
+    with open(os.path.join(home, "plugins", "installed_plugins.json"), encoding="utf-8") as fh:
+        plugins = json.load(fh)["plugins"]
+    found = [(version(e.get("version")), e["installPath"]) for name, entries in plugins.items()
+             if name.startswith("sdlc-pipeline@") and isinstance(entries, list)
+             for e in entries if isinstance(e, dict) and usable(e.get("installPath"))]
+except Exception:
+    found = []
+if not found:  # else the newest cached copy
+    pattern = os.path.join(glob.escape(home), "plugins", "cache", "*", "sdlc-pipeline", "*")
+    found = [(version(os.path.basename(p)), p) for p in glob.glob(pattern) if usable(p)]
+print(max(found)[1].replace(chr(92), "/") if found else "")
+' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" 2>/dev/null)"; fi
+  if [ -z "$PY" ]; then echo '{"error":"python 3.8+ not found"}'
+  elif [ -z "$R" ] || [ ! -f "$R/scripts/pipeline-ui.py" ]; then echo '{"error":"plugin folder not found"}'
   else "$PY" "$R/scripts/pipeline-ui.py" stop --project "$(git rev-parse --show-toplevel 2>/dev/null || pwd -W 2>/dev/null || pwd)"; fi
 fi
 ```
