@@ -11,14 +11,17 @@ to the repository; its only files are a state file and a log under <config dir>/
 """
 import argparse
 import hashlib
+import hmac
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -38,6 +41,8 @@ IDLE_LIMIT_S = 2 * 3600
 PAGE = os.path.join(HERE, "pipeline-ui.html")
 PAGE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
             "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'")
+KEY_HEADER = "X-Pipeline-UI-Token"
+NO_KEY_TEXT = "Open the dashboard with the link /pipeline-ui printed (it includes a one-time key)."
 FILE_TYPES = {"md": "text/plain; charset=utf-8", "json": "application/json; charset=utf-8",
               "html": "text/html; charset=utf-8"}
 _NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -80,7 +85,13 @@ def write_state(project, data, cfg=None):
     path = state_path(project, cfg)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    # 0600 on POSIX (the file holds the dashboard key); on Windows the user profile's ACL applies
+    descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
         json.dump(data, fh)
     os.replace(tmp, path)
 
@@ -92,15 +103,30 @@ def remove_state(project, cfg=None):
         pass
 
 
-def health(port, timeout=1.0):
+def probe(port, key=None, timeout=1.0):
+    """("ok", health) when a server on port accepts key; ("foreign", None) when something else
+    answers (another key, another program); ("down", None) when nothing answers."""
     if not isinstance(port, int) or port <= 0:
-        return None
+        return "down", None
+    request = urllib.request.Request("http://%s:%d/api/health" % (HOST, port))
+    if key:
+        request.add_header(KEY_HEADER, key)
     try:
-        with _NO_PROXY.open("http://%s:%d/api/health" % (HOST, port), timeout=timeout) as response:
+        with _NO_PROXY.open(request, timeout=timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        return None
-    return data if isinstance(data, dict) else None
+    except urllib.error.HTTPError as err:
+        err.close()
+        return "foreign", None
+    except (urllib.error.URLError, OSError):
+        return "down", None
+    except Exception:  # not HTTP, not JSON
+        return "foreign", None
+    return ("ok", data) if isinstance(data, dict) else ("foreign", None)
+
+
+def health(port, key=None, timeout=1.0):
+    """The health reply of a server that accepts key, else None."""
+    return probe(port, key, timeout)[1]
 
 
 def _same_project(info, project):
@@ -121,8 +147,10 @@ def free_port():
     return None
 
 
-def _url(port):
-    return "http://%s:%d/" % (HOST, port)
+def _url(port, key=None):
+    """The dashboard address; with the key it is the one-time link that sets the cookie."""
+    base = "http://%s:%d/" % (HOST, port)
+    return base + "?t=" + urllib.parse.quote(key, safe="") if key else base
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -151,12 +179,51 @@ class Handler(BaseHTTPRequestHandler):
         port = self.server.server_address[1]
         return host in ("127.0.0.1:%d" % port, "localhost:%d" % port)
 
-    def do_GET(self):
-        self.server.touch()
+    def _same_key(self, value):
+        expected = self.server.token.encode("utf-8")
+        return value is not None and hmac.compare_digest(value.encode("utf-8"), expected)
+
+    def _cookie(self, name):
+        for header in self.headers.get_all("Cookie") or []:
+            for part in header.split(";"):
+                key, sep, value = part.strip().partition("=")
+                if sep and key.strip() == name:
+                    return value.strip()
+        return None
+
+    def _refuse(self, path):
+        if path.startswith("/api/"):
+            self._json(403, {"error": "missing or wrong dashboard key"})
+        else:
+            self._send(403, NO_KEY_TEXT, "text/plain; charset=utf-8")
+
+    def _admit(self):
+        """Host check, then the key (one-time link, cookie or header). Only an admitted request
+        counts as activity. Returns the split URL, or None when the request was already answered."""
         if not self._host_ok():
             self._json(403, {"error": "forbidden host"})
-            return
+            return None
         url = urllib.parse.urlsplit(self.path)
+        link = urllib.parse.parse_qs(url.query).get("t") if self.command == "GET" and url.path == "/" else None
+        if link:
+            if not self._same_key(link[0]):
+                self._refuse(url.path)
+                return None
+            self.server.touch()
+            cookie = "%s=%s; HttpOnly; SameSite=Strict; Path=/" % (self.server.cookie_name, self.server.token)
+            self._send(303, b"", "text/plain; charset=utf-8", {"Location": "/", "Set-Cookie": cookie})
+            return None
+        sent = self.headers.get(KEY_HEADER)
+        if not (self._same_key(sent) or self._same_key(self._cookie(self.server.cookie_name))):
+            self._refuse(url.path)
+            return None
+        self.server.touch()
+        return url
+
+    def do_GET(self):
+        url = self._admit()
+        if url is None:
+            return
         query = urllib.parse.parse_qs(url.query)
 
         def one(name):
@@ -205,9 +272,11 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, dashboard):
+    def __init__(self, port, dashboard, token=None):
         ThreadingHTTPServer.__init__(self, (HOST, port), Handler)
         self.dashboard = dashboard
+        self.token = token or secrets.token_urlsafe(32)  # the per-launch dashboard key
+        self.cookie_name = "pui_%d" % self.server_address[1]  # cookies are not port-scoped
         self.last_request = time.time()
         self.stopping = threading.Event()
 
@@ -215,8 +284,8 @@ class Server(ThreadingHTTPServer):
         self.last_request = time.time()
 
 
-def make_server(project, port, cfg=None):
-    return Server(port, Dashboard(project, cfg=cfg))
+def make_server(project, port, cfg=None, token=None):
+    return Server(port, Dashboard(project, cfg=cfg), token)
 
 
 def start_idle_watch(server, idle_limit=IDLE_LIMIT_S, interval=60.0):
@@ -235,7 +304,7 @@ def start_idle_watch(server, idle_limit=IDLE_LIMIT_S, interval=60.0):
 def serve(project, port, cfg=None, idle_limit=IDLE_LIMIT_S):
     server = make_server(project, port, cfg)
     write_state(project, {"pid": os.getpid(), "port": port, "project": server.dashboard.repo,
-                          "started_at": time.strftime("%Y-%m-%dT%H:%M:%S")}, cfg)
+                          "token": server.token, "started_at": time.strftime("%Y-%m-%dT%H:%M:%S")}, cfg)
     start_idle_watch(server, idle_limit)
     try:
         server.serve_forever(poll_interval=0.5)
@@ -251,12 +320,13 @@ def cmd_start(project, open_browser=False, cfg=None):
     project = os.path.abspath(project)
     state = read_state(project, cfg)
     if state:
-        info = health(state.get("port"))
+        info = health(state.get("port"), state.get("token"))
         if _same_project(info, project):
+            url = _url(state["port"], state["token"])
             if open_browser:
-                webbrowser.open(_url(state["port"]))
-            return {"url": _url(state["port"]), "pid": info.get("pid"), "reused": True}
-        remove_state(project, cfg)
+                webbrowser.open(url)
+            return {"url": url, "pid": info.get("pid"), "reused": True}
+        remove_state(project, cfg)  # a server that does not take our key is not ours: leave it alone
     port = free_port()
     if port is None:
         return {"error": "no free port in %d-%d" % (FIRST_PORT, FIRST_PORT + PORT_COUNT - 1)}
@@ -271,10 +341,12 @@ def cmd_start(project, open_browser=False, cfg=None):
         proc = subprocess.Popen(command, **options)
     deadline = time.time() + 5
     while time.time() < deadline:
-        if _same_project(health(port, timeout=0.5), project):
+        state = read_state(project, cfg) or {}
+        if state.get("port") == port and _same_project(health(port, state.get("token"), timeout=0.5), project):
+            url = _url(port, state["token"])
             if open_browser:
-                webbrowser.open(_url(port))
-            return {"url": _url(port), "pid": proc.pid, "reused": False}
+                webbrowser.open(url)
+            return {"url": url, "pid": proc.pid, "reused": False}
         if proc.poll() is not None:
             return {"error": "dashboard exited with code %s; see %s" % (proc.returncode, log_path(project, cfg))}
         time.sleep(0.2)
@@ -285,12 +357,17 @@ def cmd_stop(project, cfg=None):
     state = read_state(project, cfg)
     if not state:
         return {"running": False}
-    info = health(state.get("port"))
-    if _same_project(info, project) and info.get("pid") == state.get("pid"):
-        try:
-            os.kill(state["pid"], signal.SIGTERM)
-        except OSError as exc:
-            return {"error": "could not stop pid %s: %s" % (state["pid"], exc)}
+    port = state.get("port")
+    kind, info = probe(port, state.get("token"))
+    if kind == "down":  # nothing answers: the state file is stale
+        remove_state(project, cfg)
+        return {"running": False}
+    if kind != "ok" or not _same_project(info, project) or info.get("pid") != state.get("pid"):
+        return {"error": "the server on port %s is not this project's dashboard; not stopped" % port}
+    try:
+        os.kill(state["pid"], signal.SIGTERM)
+    except OSError as exc:
+        return {"error": "could not stop pid %s: %s" % (state["pid"], exc)}
     remove_state(project, cfg)
     return {"stopped": True}
 
@@ -298,9 +375,9 @@ def cmd_stop(project, cfg=None):
 def cmd_status(project, cfg=None):
     state = read_state(project, cfg)
     if state:
-        info = health(state.get("port"))
+        info = health(state.get("port"), state.get("token"))
         if _same_project(info, project):
-            return {"running": True, "url": _url(state["port"]), "pid": info.get("pid")}
+            return {"running": True, "url": _url(state["port"], state["token"]), "pid": info.get("pid")}
     return {"running": False}
 
 

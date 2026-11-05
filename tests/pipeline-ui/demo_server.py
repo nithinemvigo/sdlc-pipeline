@@ -22,7 +22,7 @@ def main():
     fb.emi_like(cfg, repo)
     port = cli.free_port()
     server = cli.make_server(repo, port, cfg=cfg)
-    print("Demo dashboard: http://127.0.0.1:%d/  (fixture in %s)" % (port, tmp), flush=True)
+    print("Demo dashboard: %s  (fixture in %s)" % (cli._url(port, server.token), tmp), flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
