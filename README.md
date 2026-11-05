@@ -171,12 +171,13 @@ on `127.0.0.1` only, and nothing leaves your machine. Runs started with the othe
 commands appear too. Costs are estimates from `scripts/pipeline-ui-prices.json`, which you can
 edit.
 
-It stops by itself after two hours with nobody viewing it. To stop it sooner, ask Claude to stop
-the pipeline dashboard, or run:
+The printed link includes a one-time key (`?t=...`) that lets your browser in; keep it private,
+as anyone with the link can read this project's runs while the dashboard is running. The key
+changes every time the dashboard starts.
 
-```bash
-python "<plugin folder>/scripts/pipeline-ui.py" stop --project "$(git rev-parse --show-toplevel)"
-```
+It stops by itself after two hours with nobody viewing it. To stop it sooner, ask Claude to stop
+the pipeline dashboard: Claude runs the stop step from `/pipeline-ui`, which finds the plugin
+folder itself, so it works without `CLAUDE_PLUGIN_ROOT`.
 
 Cursor does not write Claude Code transcripts, so in Cursor `/pipeline-ui` skips the dashboard
 and runs the flow as normal. The transcript format is not a published contract: if a Claude

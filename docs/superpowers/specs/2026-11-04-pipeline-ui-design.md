@@ -58,10 +58,19 @@ Everything must run on **Python 3.8+**, matching the README's existing requireme
 
 Arguments: `[--flow pipeline-all|pipeline|pipeline-parallel] <the request, as for the flow>`.
 
-1. **One Bash call** that resolves the plugin root and starts the dashboard:
-   `python "${CLAUDE_PLUGIN_ROOT}/scripts/pipeline-ui.py" start --project "$(git rev-parse --show-toplevel)" --open`.
+1. **One Bash call** (a short script in the command file) that resolves three things and
+   starts the dashboard with `<python> "<root>/scripts/pipeline-ui.py" start --project <project> --open`:
+   - **root:** `${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}`; when that is empty (Claude Code's
+     Bash tool sets neither), the newest version folder, by `sort -V`, under
+     `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/*/sdlc-pipeline/*/` that contains
+     `scripts/pipeline-ui.py`. None → `{"error": "plugin folder not found"}`.
+   - **Python:** the first of `python3`, `python` for which
+     `-c 'import sys; sys.exit(sys.version_info < (3, 8))'` succeeds, so the Windows Store
+     `python3` stub is skipped. None → `{"error": "python 3.8+ not found"}`.
+   - **project:** `git rev-parse --show-toplevel`, else `pwd -W` (Git Bash), else `pwd`.
+
    It prints one JSON line: `{"url": ..., "pid": ..., "reused": true|false}`, or
-   `{"error": ...}`.
+   `{"error": ...}`. The URL carries the per-launch key (`?t=<key>`, 9.3).
 2. **One line to the client:** `Dashboard: <url>` (or `Dashboard not started: <error> — continuing without it.`).
    A failed start never blocks the run.
 3. **Flow choice.** If `--flow` was given, use it. Otherwise one `AskUserQuestion`:
@@ -75,7 +84,9 @@ Total added cost per run: two or three orchestrator tool calls.
 
 ### 5.2 Cursor
 
-If `CLAUDE_PLUGIN_ROOT` is unset (Cursor), step 1 is skipped, step 2 prints
+Cursor is detected by `CLAUDECODE` not being `1` (Claude Code sets `CLAUDECODE=1` in its Bash
+tool; `CLAUDE_PLUGIN_ROOT` is not a usable signal, since Claude Code does not set it there
+either). In Cursor step 1 prints `{"error": "needs-claude-code"}`, step 2 prints
 `The dashboard needs Claude Code; continuing without it.`, and steps 3–4 run as normal.
 
 ## 6. Where the data comes from
@@ -125,7 +136,9 @@ If `CLAUDE_PLUGIN_ROOT` is unset (Cursor), step 1 is skipped, step 2 prints
 - An agent belongs to the run whose window contains the main-session `Agent` tool call with
   id = the agent's `toolUseId`. If that call is not found, the agent's first timestamp
   decides.
-- Agents with `spawnDepth` > 1 are listed under the agent that spawned them.
+- Agents with `spawnDepth` > 1 are listed under the agent that spawned them: in the page's
+  default (start-time) order each child row comes right after its parent, recursively, shown
+  as `↳ <type> (from <parent type>)`. The cost and duration sorts are flat.
 - Per agent: type (without the `sdlc-pipeline:` prefix), description, model (the most common
   `message.model`, ignoring `<synthetic>`), first and last timestamp, duration, usage
   (section 7), state:
@@ -201,27 +214,28 @@ The table lives in `stages.py` as data, so a new agent type is a one-line change
   `/` (`feature/calculate-emi` → `calculate-emi`). Tasks are the `task-NN-<name>.md` files.
 - **Base:** `git merge-base <base> <branch>`, where base is `master` or `main`, whichever
   exists (`main` if both do).
-- **Commits:** `git log --format=%H%x09%aI%x09%s <merge-base>..<branch>`. A commit belongs to
+- **Commits:** `git log --format=%H%x09%aI%x09%s <merge-base>..<branch> --`. A commit belongs to
   task `NN` when its subject matches `\btask[ -]?0*<N>\b` (case-insensitive), where `<N>` is
   the task number without leading zeros, so `task 03`, `Task 3` and `task-03` all match task
   `03`. Others are listed as "other commits".
 - **Bug track:** for a `fix/` or `hotfix/` branch with no plan folder, the investigator's
   mini-plan (`docs/bugs/<slug>*.md`) is shown in place of the task list, and every commit is
   listed under it.
-- **Diff:** `git show --stat --patch --no-color <sha>`, cut at 1 MB with a `truncated`
+- **Diff:** `git show --stat --patch --no-color --no-ext-diff --no-textconv <sha>`, cut at 1 MB with a `truncated`
   notice.
 
 ### 6.7 Artifacts
 
 Links are offered only for files that exist from this list (paths relative to the repo):
 
-- `docs/plans/<slug>/00-overview.md` and the task files, or on the bug track
-  `docs/bugs/<slug>*.md`;
+- `docs/plans/<slug>/00-overview.md` and the task files, and on the bug track only (a `fix/` or
+  `hotfix/` branch) `docs/bugs/<slug>*.md`;
 - the requirements file, from the `--requirements` argument of the run's first
   `sdlc-pipeline:ba-run` Skill call, and its artifact root
   (`<requirements dir>/ba/<stem without .requirements>/`), from which:
   `stories/detailed_stories.md`, `acceptance/acceptance-report.md`, and any `*.html` file
-  under the artifact root.
+  under the artifact root. A requirements file or artifact root (given or derived) that is not
+  inside the repository is ignored, before any glob runs.
 
 ## 7. Usage and cost
 
@@ -273,18 +287,37 @@ Both *waiting for you* rules show how long it has waited (`waiting for you · 3 
 ### 9.2 State and lifecycle
 
 - State file: `<config dir>/sdlc-pipeline/ui/<first 12 hex of sha1(repo root)>.json` with
-  `pid`, `port`, `project`, `started_at`. It is the only file the dashboard writes, and it is
-  outside the repository.
-- Reuse check: `GET /api/health` on the stored port returns the same `project`.
+  `pid`, `port`, `project`, `token` (the per-launch key, 9.3) and `started_at`; created 0600 on
+  POSIX (on Windows the user profile's ACL protects it). The server also writes its log next
+  to it (`<same name>.log`, the detached process's stderr). These are the only files the
+  dashboard writes, and they are outside the repository.
+- Reuse check: `GET /api/health` on the stored port, sent with the stored key, returns the same
+  `project`. A server that does not accept the key is not ours: it is never reused and never
+  stopped. A healthy server from another plugin version is stopped and a new one started.
+- `stop`: nothing answers → the stale state file is deleted, `{"running": false}`; the server
+  answers but the key, project or pid does not match →
+  `{"error": "the server on port N is not this project's dashboard; not stopped"}` and the
+  state file is kept; otherwise the process is ended, `{"stopped": true}`.
 - Port: 8765 first, then the next 19 ports. If none is free, `start` returns
   `{"error": "no free port in 8765-8784"}`.
 - Idle shutdown: after 2 hours with no HTTP request, the server exits and deletes its state
-  file. `stop` does the same immediately.
+  file. `stop` does the same immediately. Only requests that pass the Host and key checks count
+  as activity.
 
 ### 9.3 HTTP API (all `GET`, JSON unless noted)
 
+Every endpoint needs the per-launch key. `start` prints and opens `http://127.0.0.1:<port>/?t=<key>`;
+`GET /?t=<key>` with the right key answers `303` to `/` with
+`Set-Cookie: pui_<port>=<key>; HttpOnly; SameSite=Strict; Path=/`, so the key leaves the address
+bar and the page's own requests carry the cookie. The CLI sends the header
+`X-Pipeline-UI-Token: <key>` instead. Without a valid cookie or header, `/` gets a 403 plain-text
+"Open the dashboard with the link /pipeline-ui printed (it includes a one-time key)." and `/api/*`
+gets a 403 `{"error": "missing or wrong dashboard key"}`. `HEAD`, `POST`, `PUT`, `DELETE` and
+`OPTIONS` get `405` (after the same checks).
+
 | Path | Returns |
 |---|---|
+| `/?t=<key>` | `303` to `/`, setting the cookie |
 | `/` | `pipeline-ui.html` |
 | `/api/health` | `project`, plugin version, `pid` |
 | `/api/runs` | `project`, the transcript `folders` searched (for the empty state), and `runs`: id, flow, title, branch, status, started, duration, token total, estimated cost, linked run ids |
@@ -338,9 +371,23 @@ start. The plan folder and git results are cached for 5 seconds.
 - Binds to `127.0.0.1` only. Never `0.0.0.0`.
 - Requests whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>` get a 403,
   so a web page using DNS rebinding cannot read transcripts through the server.
+- **Per-launch key.** Each server generates `secrets.token_urlsafe(32)` and keeps it in its
+  state file. Every request needs it, compared with `hmac.compare_digest`: the browser gets it
+  once in the `/?t=` link and then sends the cookie `pui_<port>` (`HttpOnly`,
+  `SameSite=Strict`, `Path=/`; the port is in the name because cookies are not port-scoped and
+  two projects' dashboards must not overwrite each other); the CLI sends the
+  `X-Pipeline-UI-Token` header. Other local users and sandboxed processes that can reach the
+  loopback port therefore cannot read transcripts. The order is Host check, then the key, and
+  only then does the request count as activity, so refused requests do not keep an idle server
+  alive.
+- **No port sharing on Windows:** the server does not set `SO_REUSEADDR` there and sets
+  `SO_EXCLUSIVEADDRUSE`, so no second socket can bind a port the dashboard is listening on.
 - The CLI's own health checks bypass any `HTTP_PROXY` setting.
 - Branch names read from transcripts are never passed to git if they start with `-`.
-- Every endpoint is read-only. The only file written is the state file (9.2).
+- Every endpoint is read-only. The only files written are the state file and the log (9.2).
+- BA requirements and artifact-root paths read from transcripts are ignored unless they are
+  inside the repository; this is checked before any glob.
+- git is called with `--` after the `log` range and with `--no-textconv` for diffs.
 - `/api/diff` accepts only a 40-character hex sha that is in that run's commit list; git is
   called with an argument list, never through a shell.
 - `/api/file` accepts only keys from that run's artifact list (6.7); there is no path
@@ -351,8 +398,9 @@ start. The plan folder and git results are cached for 5 seconds.
 - The page itself is served with a Content-Security-Policy that allows no external scripts,
   styles, fonts or connections, and builds every element with text nodes (no `innerHTML`),
   so transcript text can never run as markup.
-- Every response sets `Cache-Control: no-store`, so transcript content is not cached by the
-  browser.
+- Every response, including the standard library's own errors (400, 404, 501), sets
+  `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, so transcript content is not
+  cached by the browser.
 
 ## 13. Testing
 
