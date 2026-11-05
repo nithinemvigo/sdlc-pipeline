@@ -52,6 +52,13 @@ class PageTest(unittest.TestCase):
         self.assertIn("This session could not be read", self.html)
         self.assertIn("PART_ERRORS.indexOf(k) < 0", self.html)
 
+    def test_waiting_age_keeps_ticking(self):
+        self.assertIn('"data-since": waiting ? since : null', self.html)
+        timer = self.html[self.html.index("setInterval("):]
+        timer = timer[:timer.index("}, 1000);")]
+        self.assertIn('document.querySelectorAll("[data-since]").forEach((el) => '
+                      '{ el.textContent = waitingLabel(Number(el.dataset.since)); });', timer)
+
     def test_small_fixes(self):
         self.assertIn("overflow-wrap: anywhere", self.html)
         self.assertIn("/sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-ui", self.html)

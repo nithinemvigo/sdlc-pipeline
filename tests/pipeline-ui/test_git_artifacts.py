@@ -3,9 +3,10 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import fixture_builder as fb
-from pipeline_ui import artifacts, gitinfo
+from pipeline_ui import artifacts, dashboard, gitinfo
 
 BRANCH = "feature/calculate-emi"
 
@@ -93,8 +94,32 @@ class ArtifactsTest(unittest.TestCase):
     def test_bug_plans(self):
         self.assertEqual([os.path.basename(p) for p in artifacts.bug_plans(self.repo, "rounding")],
                          ["rounding-mini-plan.md"])
-        keys = [i["key"] for i in artifacts.artifact_list(self.repo, "rounding", [])]
+        keys = [i["key"] for i in artifacts.artifact_list(self.repo, "rounding", [], bug_track=True)]
         self.assertEqual(keys, ["bug-1"])
+
+    def test_bug_plans_only_on_the_bug_track(self):
+        self.assertTrue(artifacts.bug_track("fix/rounding"))
+        self.assertTrue(artifacts.bug_track("hotfix/rounding"))
+        self.assertFalse(artifacts.bug_track("feature/rounding"))
+        self.assertFalse(artifacts.bug_track(None))
+        self.assertEqual(artifacts.artifact_list(self.repo, "rounding", []), [])
+        board = dashboard.Dashboard(self.repo, cfg=os.path.join(self.tmp, "cfg"), prices={})
+        self.assertEqual(board._tasks("feature/rounding")["bug_plans"], [])
+        self.assertEqual(board._tasks("fix/rounding")["bug_plans"], ["docs/bugs/rounding-mini-plan.md"])
+
+    def test_ba_folders_outside_the_repo_are_ignored(self):
+        top = "C:/" if os.name == "nt" else "/"
+        with mock.patch("pipeline_ui.artifacts.glob.glob") as fake_glob:
+            self.assertEqual(artifacts.ba_paths(self.repo, self.window("--artifact-root " + top)), (None, None))
+            self.assertEqual(artifacts.artifact_list(self.repo, None, self.window("--artifact-root " + top)), [])
+            outside = self.window("--requirements ../outside.md")
+            self.assertEqual(artifacts.ba_paths(self.repo, outside), (None, None))
+            self.assertEqual(artifacts.artifact_list(self.repo, None, outside), [])
+            requirements, root = artifacts.ba_paths(
+                self.repo, self.window("--requirements docs/features/calculate-emi.requirements.md --artifact-root " + top))
+            self.assertTrue(requirements.endswith("calculate-emi.requirements.md"))
+            self.assertIsNone(root)
+            fake_glob.assert_not_called()
 
     def test_inside_and_resolve(self):
         self.assertTrue(artifacts.inside(self.repo, os.path.join(self.repo, "README.md")))

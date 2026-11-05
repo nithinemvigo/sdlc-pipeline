@@ -38,6 +38,11 @@ def plan_tasks(repo, slug):
     return tasks
 
 
+def bug_track(branch):
+    """Bug plans (docs/bugs/) belong to fix/ and hotfix/ branches only."""
+    return bool(branch) and branch.startswith(("fix/", "hotfix/"))
+
+
 def bug_plans(repo, slug):
     if not slug:
         return []
@@ -72,6 +77,11 @@ def ba_paths(repo, window):
                 if stem.endswith(".requirements"):
                     stem = stem[:-len(".requirements")]
                 root = os.path.join(os.path.dirname(requirements), "ba", stem)
+            # transcript text decides these paths: anything outside the repo is ignored before any glob
+            if requirements and not inside(repo, requirements):
+                requirements = None
+            if root and not inside(repo, root):
+                root = None
             return requirements, root
     return None, None
 
@@ -85,7 +95,8 @@ def inside(repo, path):
         return False
 
 
-def artifact_list(repo, slug, window):
+def artifact_list(repo, slug, window, bug_track=False):
+    """bug_track: list docs/bugs/<slug>*.md too (true only for fix/ and hotfix/ branches)."""
     items = []
 
     def add(key, label, path):
@@ -97,7 +108,7 @@ def artifact_list(repo, slug, window):
         add("plan-overview", "Plan overview", os.path.join(repo, "docs", "plans", slug, "00-overview.md"))
         for task in plan_tasks(repo, slug):
             add("task-" + task["id"], "Task " + task["id"], os.path.join(repo, task["path"]))
-        for number, path in enumerate(bug_plans(repo, slug), 1):
+        for number, path in enumerate(bug_plans(repo, slug) if bug_track else [], 1):
             add("bug-%d" % number, "Bug plan", path)
     requirements, root = ba_paths(repo, window)
     add("requirements", "Requirements", requirements)

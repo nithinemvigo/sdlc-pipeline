@@ -106,9 +106,12 @@ function ago(epochSeconds) {
   if (s < 86400) return Math.round(s / 3600) + " h";
   return Math.round(s / 86400) + " d";
 }
+function waitingLabel(since) { return STATUS_LABEL.waiting + " · " + ago(since); }
 function badge(status, since) {
-  const label = (STATUS_LABEL[status] || status) + (status === "waiting" && since ? " · " + ago(since) : "");
-  return h("span", { class: "badge s-" + status }, label);
+  const waiting = status === "waiting" && since;
+  // data-since lets the 1-second timer keep the age current between redraws
+  return h("span", { class: "badge s-" + status, "data-since": waiting ? since : null },
+    waiting ? waitingLabel(since) : (STATUS_LABEL[status] || status));
 }
 function fmtTokens(n) {
   if (n === null || n === undefined) return "—";
@@ -360,6 +363,7 @@ async function toggleFile(url, key) {
 
 setInterval(() => {
   if (state.updated) $("#updated").textContent = "updated " + Math.round((Date.now() - state.updated) / 1000) + " s ago";
+  document.querySelectorAll("[data-since]").forEach((el) => { el.textContent = waitingLabel(Number(el.dataset.since)); });
 }, 1000);
 window.addEventListener("hashchange", () => { state.diffs.clear(); state.file = null; state.last = null; refresh(); });
 refresh();

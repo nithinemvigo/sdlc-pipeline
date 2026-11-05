@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -168,6 +169,66 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.server.last_request, 1000.0)
         self.get("/api/runs")
         self.assertGreater(self.server.last_request, 1000.0)
+
+    # ---- every response is no-store; methods other than GET are refused ----
+    def test_head_and_post_refused(self):
+        for method in ("HEAD", "POST", "PUT", "DELETE", "OPTIONS"):
+            code, headers, body = self.get("/api/runs", method=method)
+            self.assertEqual(code, 405, method)
+            self.assertEqual(headers["Allow"], "GET")
+            self.assertEqual(headers["Cache-Control"], "no-store")
+            self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+            if method == "HEAD":
+                self.assertEqual(body, b"")
+            else:
+                self.assertEqual(json.loads(body), {"error": "method not allowed"})
+        no_key_post = self.get("/api/runs", method="POST", token=None)
+        no_key_head = self.get("/", method="HEAD", token=None)
+        self.assertEqual((no_key_post[0], no_key_head[0]), (403, 403))
+        self.assertEqual(self.get("/api/runs", method="POST", host="evil.example:%d" % self.port)[0], 403)
+
+    def test_stdlib_errors_are_no_store_too(self):
+        code, headers, _body = self.get("/api/runs", method="PATCH")
+        self.assertEqual(code, 501)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall(b"GET /a b c HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            reply = b""
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                reply += chunk
+        head = reply.split(b"\r\n\r\n", 1)[0].decode("latin-1")
+        self.assertTrue(head.startswith("HTTP/1.0 400") or head.startswith("HTTP/1.1 400"), head)
+        self.assertIn("Cache-Control: no-store", head)
+        self.assertIn("X-Content-Type-Options: nosniff", head)
+        self.assertEqual(head.count("Cache-Control"), 1)
+
+    def test_success_headers_not_duplicated(self):
+        _code, headers, _body = self.get("/api/health")
+        self.assertEqual(headers.get_all("Cache-Control"), ["no-store"])
+        self.assertEqual(headers.get_all("X-Content-Type-Options"), ["nosniff"])
+
+
+class PortTest(unittest.TestCase):
+    def test_no_second_server_on_a_listening_port(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cfg = os.path.join(tmp, "cfg")
+        port = cli.free_port()
+        first = cli.make_server(tmp, port, cfg=cfg)
+        try:
+            try:
+                second = cli.make_server(tmp, port, cfg=cfg)
+            except OSError:
+                second = None
+            if second is not None:
+                second.server_close()
+            self.assertIsNone(second, "a second server could bind port %d" % port)
+        finally:
+            first.server_close()
 
 
 class IdleTest(unittest.TestCase):

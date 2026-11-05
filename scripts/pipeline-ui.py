@@ -159,17 +159,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # keep the console quiet
         pass
 
+    def end_headers(self):
+        # every response, the standard library's own errors (400, 404, 501 ...) included
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        BaseHTTPRequestHandler.end_headers(self)
+
     def _send(self, code, body, content_type, extra=None):
         data = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
         for key, value in (extra or {}).items():
             self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":
+            self.wfile.write(data)
 
     def _json(self, code, payload):
         self._send(code, json.dumps(payload), "application/json; charset=utf-8")
@@ -268,9 +273,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    def _not_allowed(self):
+        if self._admit() is None:
+            return
+        self._send(405, json.dumps({"error": "method not allowed"}), "application/json; charset=utf-8",
+                   {"Allow": "GET"})
+
+    do_HEAD = do_POST = do_PUT = do_DELETE = do_OPTIONS = _not_allowed
+
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
+    # On Windows SO_REUSEADDR lets a second socket bind a port that is already listening.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        ThreadingHTTPServer.server_bind(self)
 
     def __init__(self, port, dashboard, token=None):
         ThreadingHTTPServer.__init__(self, (HOST, port), Handler)

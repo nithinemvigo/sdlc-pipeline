@@ -62,7 +62,8 @@ class Dashboard(object):
             if not item or item["run"] is None:
                 return None
             run = item["run"]
-            items = artifacts.artifact_list(self.repo, artifacts.slug_of(run.branch), run.entries)
+            items = artifacts.artifact_list(self.repo, artifacts.slug_of(run.branch), run.entries,
+                                            bug_track=artifacts.bug_track(run.branch))
             return artifacts.resolve(self.repo, items, key)
 
     # ---- collection ----
@@ -197,7 +198,7 @@ class Dashboard(object):
         section("checkpoints", lambda: item["checkpoints"])
         section("tasks", lambda: self._tasks(run.branch))
         section("artifacts", lambda: [dict(a) for a in artifacts.artifact_list(
-            self.repo, artifacts.slug_of(run.branch), run.entries)])
+            self.repo, artifacts.slug_of(run.branch), run.entries, bug_track=artifacts.bug_track(run.branch))])
         section("warnings", lambda: self._warnings(item))
         if errors:
             out["errors"] = errors
@@ -253,8 +254,8 @@ class Dashboard(object):
         for commit in commits or []:
             number = gitinfo.task_of(commit["subject"], list(by_number))
             (by_number[number]["commits"] if number is not None else other).append(commit)
-        bugs = [] if tasks else [os.path.relpath(p, self.repo).replace("\\", "/")
-                                 for p in artifacts.bug_plans(self.repo, slug)]
+        bugs = [] if tasks or not artifacts.bug_track(branch) else [
+            os.path.relpath(p, self.repo).replace("\\", "/") for p in artifacts.bug_plans(self.repo, slug)]
         return {"slug": slug, "tasks": tasks, "other_commits": other, "bug_plans": bugs, "git": commits is not None}
 
     def _warnings(self, item):
