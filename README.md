@@ -151,6 +151,37 @@ Nano changes skip planning and reviews entirely: `implementer` → `code-reviewe
 
 The requirements agent asks you only about major gaps (purpose, users, scope, main flow, security, other systems it connects to), then writes `docs/features/<slug>.requirements.md` from the plugin's template for you to approve or change. A feature that is genuinely too big for one run is split — only after you approve the split — into a few independent parts in `docs/features/<slug>/`, each complete on its own; each run builds one part, and once that PR is merged and deployed you run the next part with the command the run gives you. Next, the BA requirements analysis (Stage Q) breaks the approved requirements into atomic requirements, finds and ranks gaps, asks you about each gap (every Critical and High gap must be answered), and writes development stories with acceptance criteria: lean stories are appended to the requirements file, and the detailed stories (full acceptance criteria, edge cases, test data) go to `ba/<name>/stories/detailed_stories.md`, with an HTML report under `docs/features/.../ba/<name>/report/`. If you pause, run the same command again to resume. The planner then builds from the requirements and the detailed stories. Before the PR, an acceptance gate (Stage 5.85, the `acceptance-verifier` agent) checks that every acceptance criterion in the stories is proven by the build; you can also run it on its own with `/sdlc-pipeline:verify-acceptance <requirements file>`. BA folders created by an earlier plugin version (BA v0.5.1) are reconciled automatically on the next Stage Q run.
 
+## Watching a run
+
+`/sdlc-pipeline:pipeline-ui <request>` opens a dashboard in your browser, asks which flow to run
+(`pipeline-all`, `pipeline` or `pipeline-parallel`), then runs that flow exactly as if you had
+typed it. Add `--flow pipeline-all` to skip the question.
+
+The dashboard refreshes every few seconds and shows:
+
+- every pipeline run in this repository, newest first, with its status (*running*, *waiting for
+  you*, *finished*, *stopped*), duration, tokens and estimated cost;
+- for one run: the stage timeline with the questions asked, every agent with its model, time and
+  tokens, your answers, each task's commits with their diffs, and links to the plan,
+  requirements, stories and reports.
+
+It is read-only and local. It reads the transcripts Claude Code already keeps under
+`~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR`), your git history and `docs/plans/`. It listens
+on `127.0.0.1` only, and nothing leaves your machine. Runs started with the other pipeline
+commands appear too. Costs are estimates from `scripts/pipeline-ui-prices.json`, which you can
+edit.
+
+It stops by itself after two hours with nobody viewing it. To stop it sooner, ask Claude to stop
+the pipeline dashboard, or run:
+
+```bash
+python "<plugin folder>/scripts/pipeline-ui.py" stop --project "$(git rev-parse --show-toplevel)"
+```
+
+Cursor does not write Claude Code transcripts, so in Cursor `/pipeline-ui` skips the dashboard
+and runs the flow as normal. The transcript format is not a published contract: if a Claude
+Code update changes it, the dashboard shows a warning instead of failing.
+
 ## Workflow
 
 ```
