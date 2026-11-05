@@ -139,8 +139,34 @@ function fmtTime(iso) {
 function isLive(status) { return status === "running" || status === "waiting"; }
 function route() { const m = location.hash.match(/^#run=(.+)$/); return m ? decodeURIComponent(m[1]) : null; }
 function openRun(id) { location.hash = "run=" + encodeURIComponent(id); }
-async function getJSON(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.json(); }
-async function getText(url) { const r = await fetch(url, { cache: "no-store" }); if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); }
+// The one-time key arrives in the fragment (#k=...), which is never sent to a server. It moves to
+// sessionStorage (per origin, so per port) and travels only in the X-Pipeline-UI-Token header.
+const KEY_HEADER = "X-Pipeline-UI-Token";
+const KEY_STORE = "pipeline-ui-key";
+const NO_KEY = "Open the dashboard with the link /pipeline-ui printed (it contains a one-time key).";
+let memoryKey = null; // used when sessionStorage is blocked
+function takeKey() {
+  const m = location.hash.match(/^#k=([^&]+)$/);
+  if (!m) return;
+  memoryKey = decodeURIComponent(m[1]);
+  try { sessionStorage.setItem(KEY_STORE, memoryKey); } catch (e) { /* keep it in memory only */ }
+  history.replaceState(null, "", location.pathname + location.search);
+}
+function currentKey() {
+  try { return sessionStorage.getItem(KEY_STORE) || memoryKey; } catch (e) { return memoryKey; }
+}
+function noKeyError() { const e = new Error("no dashboard key"); e.noKey = true; return e; }
+async function api(url) {
+  const key = currentKey();
+  if (!key) throw noKeyError();
+  const r = await fetch(url, { cache: "no-store", headers: { [KEY_HEADER]: key } });
+  if (r.status === 403) throw noKeyError();
+  if (!r.ok) throw new Error(r.status + " " + r.statusText);
+  return r;
+}
+async function getJSON(url) { return (await api(url)).json(); }
+async function getText(url) { return (await api(url)).text(); }
+function noKeyView() { return h("div", { class: "empty" }, h("p", {}, NO_KEY)); }
 function show(node) { $("#main").replaceChildren(node); }
 
 async function refresh() {
@@ -170,6 +196,8 @@ async function refresh() {
     $("#err").textContent = "";
   } catch (e) {
     if (seq !== state.seq) return;
+    $("#err").textContent = "";
+    if (e.noKey) { show(noKeyView()); return; }
     $("#err").textContent = "Could not load from the dashboard server (" + e.message + "). If it stopped, run /sdlc-pipeline:pipeline-ui again.";
   }
   state.timer = setTimeout(refresh, live ? 3000 : 30000);
@@ -375,10 +403,19 @@ function artifactsView(runId, items) {
   return h("div", {},
     h("ul", { class: "files" }, items.map((a) => h("li", {},
       a.kind === "html"
-        ? h("a", { href: url(a.key), target: "_blank", rel: "noopener" }, a.label)
+        ? h("button", { title: "Opens in a new tab", onclick: () => openReport(runId, a.key) }, a.label + " ↗")
         : h("button", { onclick: () => toggleFile(url(a.key), a.key) }, (state.file && state.file.key === a.key ? "hide " : "") + a.label),
       " ", h("code", { class: "muted" }, a.path)))),
     state.file ? h("pre", {}, state.file.text) : null);
+}
+// A new tab cannot send the header, so an HTML report opens through a signed link valid for 60 s.
+async function openReport(runId, key) {
+  try {
+    const link = await getJSON("/api/file-link?run=" + encodeURIComponent(runId) + "&key=" + encodeURIComponent(key));
+    window.open(link.url, "_blank", "noopener");
+  } catch (e) {
+    $("#err").textContent = e.noKey ? NO_KEY : "Could not open this report: " + e.message;
+  }
 }
 async function toggleFile(url, key) {
   if (state.file && state.file.key === key) { state.file = null; redraw(); return; }
@@ -393,7 +430,8 @@ setInterval(() => {
   if (state.updated) $("#updated").textContent = "updated " + Math.round((Date.now() - state.updated) / 1000) + " s ago";
   document.querySelectorAll("[data-since]").forEach((el) => { el.textContent = waitingLabel(Number(el.dataset.since)); });
 }, 1000);
-window.addEventListener("hashchange", () => { state.diffs.clear(); state.file = null; state.last = null; refresh(); });
+window.addEventListener("hashchange", () => { takeKey(); state.diffs.clear(); state.file = null; state.last = null; refresh(); });
+takeKey();
 refresh();
 </script>
 </body>

@@ -69,6 +69,27 @@ class PageTest(unittest.TestCase):
         self.assertIn("seen.has(a.id)", body)  # a parent loop cannot repeat or drop rows
         self.assertIn('" (from " + byId[a.parent].type + ")"', self.html)
 
+    def test_key_from_fragment_to_session_storage_to_header(self):
+        self.assertIn('location.hash.match(/^#k=([^&]+)$/)', self.html)
+        self.assertIn('sessionStorage.setItem(KEY_STORE, ', self.html)
+        self.assertIn('sessionStorage.getItem(KEY_STORE)', self.html)
+        self.assertIn('history.replaceState(null, "", location.pathname + location.search);', self.html)
+        self.assertIn('const KEY_HEADER = "X-Pipeline-UI-Token";', self.html)
+        self.assertIn("headers: { [KEY_HEADER]: key }", self.html)
+        self.assertEqual(self.html.count("fetch("), 1, "every request goes through api()")
+        self.assertNotIn("document.cookie", self.html)
+        self.assertNotIn("?t=", self.html)
+
+    def test_no_key_message_instead_of_the_error_loop(self):
+        self.assertIn('"Open the dashboard with the link /pipeline-ui printed (it contains a one-time key)."',
+                      self.html)
+        self.assertIn("if (e.noKey) { show(noKeyView()); return; }", self.html)
+
+    def test_html_reports_open_through_a_signed_link(self):
+        self.assertIn('"/api/file-link?run="', self.html)
+        self.assertIn('window.open(link.url, "_blank", "noopener")', self.html)
+        self.assertNotIn('target: "_blank"', self.html)
+
     def test_small_fixes(self):
         self.assertIn("overflow-wrap: anywhere", self.html)
         self.assertIn("/sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-ui", self.html)

@@ -12,8 +12,10 @@ to the repository; its only files are a state file and a log under <config dir>/
 import argparse
 import hashlib
 import hmac
+import html
 import json
 import os
+import pathlib
 import secrets
 import signal
 import socket
@@ -42,7 +44,8 @@ PAGE = os.path.join(HERE, "pipeline-ui.html")
 PAGE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
             "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'")
 KEY_HEADER = "X-Pipeline-UI-Token"
-NO_KEY_TEXT = "Open the dashboard with the link /pipeline-ui printed (it includes a one-time key)."
+LINK_TTL_S = 60  # signed /api/file links (HTML reports opened in a new tab)
+LINK_MAX_AHEAD_S = 120
 FILE_TYPES = {"md": "text/plain; charset=utf-8", "json": "application/json; charset=utf-8",
               "html": "text/html; charset=utf-8"}
 _NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -72,35 +75,63 @@ def log_path(project, cfg=None):
     return os.path.join(_ui_dir(cfg), _digest(project) + ".log")
 
 
-def read_state(project, cfg=None):
+def open_path(project, cfg=None):
+    """The redirect page `start --open` hands to the browser, so the key is never on a command line."""
+    return os.path.join(_ui_dir(cfg), _digest(project) + "-open.html")
+
+
+def _remove(path):
     try:
-        with open(state_path(project, cfg), encoding="utf-8") as fh:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def read_state(project, cfg=None):
+    """The state file, or None. A state file without a usable key is stale: it is removed, and
+    its server is never probed or stopped."""
+    path = state_path(project, cfg)
+    try:
+        with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if not isinstance(data.get("token"), str) or not data["token"]:
+        _remove(path)
+        return None
+    return data
 
 
-def write_state(project, data, cfg=None):
-    path = state_path(project, cfg)
+def _write_private(path, text):
+    """Atomic write; 0600 on POSIX (the file holds the dashboard key), the profile ACL on Windows."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    try:
-        os.remove(tmp)
-    except OSError:
-        pass
-    # 0600 on POSIX (the file holds the dashboard key); on Windows the user profile's ACL applies
+    _remove(tmp)
     descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
-        json.dump(data, fh)
+        fh.write(text)
     os.replace(tmp, path)
 
 
+def write_state(project, data, cfg=None):
+    _write_private(state_path(project, cfg), json.dumps(data))
+
+
 def remove_state(project, cfg=None):
-    try:
-        os.remove(state_path(project, cfg))
-    except OSError:
-        pass
+    _remove(state_path(project, cfg))
+    _remove(open_path(project, cfg))
+
+
+def open_in_browser(project, url, cfg=None):
+    """Opens url through a private redirect file: on Linux a browser's argv is readable by others."""
+    path = open_path(project, cfg)
+    quoted = html.escape(url, quote=True)
+    _write_private(path, '<!doctype html>\n<meta charset="utf-8">\n<title>Pipeline runs</title>\n'
+                         '<meta http-equiv="refresh" content="0; url=%s">\n'
+                         '<p><a href="%s">Open the pipeline dashboard</a></p>\n' % (quoted, quoted))
+    webbrowser.open(pathlib.Path(path).as_uri())
 
 
 def probe(port, key=None, timeout=1.0):
@@ -148,9 +179,15 @@ def free_port():
 
 
 def _url(port, key=None):
-    """The dashboard address; with the key it is the one-time link that sets the cookie."""
+    """The dashboard address. The key goes in the fragment, which browsers never send to a server
+    or put in a Referer; the page moves it to sessionStorage and sends it as a header."""
     base = "http://%s:%d/" % (HOST, port)
-    return base + "?t=" + urllib.parse.quote(key, safe="") if key else base
+    return base + "#k=" + urllib.parse.quote(key, safe="") if key else base
+
+
+def sign_file(token, run, key, exp):
+    message = ("%s\n%s\n%d" % (run, key, exp)).encode("utf-8")
+    return hmac.new(token.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -163,6 +200,7 @@ class Handler(BaseHTTPRequestHandler):
         # every response, the standard library's own errors (400, 404, 501 ...) included
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         BaseHTTPRequestHandler.end_headers(self)
 
     def _send(self, code, body, content_type, extra=None):
@@ -188,39 +226,37 @@ class Handler(BaseHTTPRequestHandler):
         expected = self.server.token.encode("utf-8")
         return value is not None and hmac.compare_digest(value.encode("utf-8"), expected)
 
-    def _cookie(self, name):
-        for header in self.headers.get_all("Cookie") or []:
-            for part in header.split(";"):
-                key, sep, value = part.strip().partition("=")
-                if sep and key.strip() == name:
-                    return value.strip()
-        return None
-
-    def _refuse(self, path):
-        if path.startswith("/api/"):
-            self._json(403, {"error": "missing or wrong dashboard key"})
-        else:
-            self._send(403, NO_KEY_TEXT, "text/plain; charset=utf-8")
+    def _signed(self, url):
+        """A valid, unexpired /api/file signature (an HTML report opened in a new tab sends no header)."""
+        if url.path != "/api/file":
+            return False
+        query = urllib.parse.parse_qs(url.query)
+        values = [(query.get(name) or [None])[0] for name in ("run", "key", "exp", "sig")]
+        if any(value is None for value in values):
+            return False
+        run, key, exp, sig = values
+        try:
+            exp = int(exp)
+        except ValueError:
+            return False
+        now = time.time()
+        if not now <= exp <= now + LINK_MAX_AHEAD_S:
+            return False
+        expected = sign_file(self.server.token, run, key, exp)
+        return hmac.compare_digest(sig.encode("utf-8"), expected.encode("utf-8"))
 
     def _admit(self):
-        """Host check, then the key (one-time link, cookie or header). Only an admitted request
-        counts as activity. Returns the split URL, or None when the request was already answered."""
+        """Host check, then the key (X-Pipeline-UI-Token, or a signed /api/file link). Only an
+        admitted request counts as activity. `GET /` is the page, which holds no data, so it needs
+        no key and is not activity. Returns the split URL, or None when the request was answered."""
         if not self._host_ok():
             self._json(403, {"error": "forbidden host"})
             return None
         url = urllib.parse.urlsplit(self.path)
-        link = urllib.parse.parse_qs(url.query).get("t") if self.command == "GET" and url.path == "/" else None
-        if link:
-            if not self._same_key(link[0]):
-                self._refuse(url.path)
-                return None
-            self.server.touch()
-            cookie = "%s=%s; HttpOnly; SameSite=Strict; Path=/" % (self.server.cookie_name, self.server.token)
-            self._send(303, b"", "text/plain; charset=utf-8", {"Location": "/", "Set-Cookie": cookie})
-            return None
-        sent = self.headers.get(KEY_HEADER)
-        if not (self._same_key(sent) or self._same_key(self._cookie(self.server.cookie_name))):
-            self._refuse(url.path)
+        if self.command == "GET" and url.path == "/":
+            return url
+        if not (self._same_key(self.headers.get(KEY_HEADER)) or (self.command == "GET" and self._signed(url))):
+            self._json(403, {"error": "missing or wrong dashboard key"})
             return None
         self.server.touch()
         return url
@@ -255,6 +291,15 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(404, {"error": "unknown commit for this run"})
                 else:
                     self._send(200, text, "text/plain; charset=utf-8")
+            elif url.path == "/api/file-link":
+                run_id, key = one("run"), one("key")
+                if dash.file(run_id, key) is None:
+                    self._json(404, {"error": "unknown file for this run"})
+                else:
+                    exp = int(time.time()) + LINK_TTL_S
+                    link = urllib.parse.urlencode({"run": run_id, "key": key, "exp": exp,
+                                                   "sig": sign_file(self.server.token, run_id, key, exp)})
+                    self._json(200, {"url": "/api/file?" + link})
             elif url.path == "/api/file":
                 found = dash.file(one("run"), one("key"))
                 if found is None:
@@ -296,7 +341,6 @@ class Server(ThreadingHTTPServer):
         ThreadingHTTPServer.__init__(self, (HOST, port), Handler)
         self.dashboard = dashboard
         self.token = token or secrets.token_urlsafe(32)  # the per-launch dashboard key
-        self.cookie_name = "pui_%d" % self.server_address[1]  # cookies are not port-scoped
         self.last_request = time.time()
         self.stopping = threading.Event()
 
@@ -348,7 +392,7 @@ def cmd_start(project, open_browser=False, cfg=None):
         elif _same_project(info, project):
             url = _url(state["port"], state["token"])
             if open_browser:
-                webbrowser.open(url)
+                open_in_browser(project, url, cfg)
             return {"url": url, "pid": info.get("pid"), "reused": True}
         remove_state(project, cfg)  # a server that does not take our key is not ours: leave it alone
     port = free_port()
@@ -369,7 +413,7 @@ def cmd_start(project, open_browser=False, cfg=None):
         if state.get("port") == port and _same_project(health(port, state.get("token"), timeout=0.5), project):
             url = _url(port, state["token"])
             if open_browser:
-                webbrowser.open(url)
+                open_in_browser(project, url, cfg)
             return {"url": url, "pid": proc.pid, "reused": False}
         if proc.poll() is not None:
             return {"error": "dashboard exited with code %s; see %s" % (proc.returncode, log_path(project, cfg))}

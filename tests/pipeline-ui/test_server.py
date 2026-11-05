@@ -1,7 +1,11 @@
 """Tests for scripts/pipeline-ui.py: HTTP API, security rules, idle shutdown and the CLI."""
 import importlib.util
+import hashlib
+import hmac
 import json
 import os
+import pathlib
+import secrets
 import shutil
 import socket
 import subprocess
@@ -79,6 +83,18 @@ class ServerTest(unittest.TestCase):
     def get(self, path, host=None, token=TOKEN, cookie=None, method="GET"):
         return fetch(self.port, path, host=host, token=token, cookie=cookie, method=method)
 
+    def anon(self, path, **kwargs):
+        """The same request with no key at all."""
+        kwargs["token"] = None
+        return self.get(path, **kwargs)
+
+    def sign(self, run, key, exp):
+        message = ("%s\n%s\n%d" % (run, key, exp)).encode("utf-8")
+        return hmac.new(TOKEN.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+    def file_url(self, run, key, exp, sig):
+        return "/api/file?" + urllib.parse.urlencode({"run": run, "key": key, "exp": exp, "sig": sig})
+
     def run_path(self, key):
         return urllib.parse.quote(self.ids[key], safe="")
 
@@ -127,48 +143,99 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.get("/api/runs", host="evil.example:%d" % self.port)[0], 403)
         self.assertEqual(self.get("/api/runs", host="localhost:%d" % self.port)[0], 200)
 
-    # ---- per-launch key ----
-    def test_no_key_refused(self):
-        for path in ("/api/runs", "/api/health", "/api/runs/" + self.run_path("run1")):
-            code, headers, body = self.get(path, token=None)
+    # ---- per-launch key: only in the X-Pipeline-UI-Token header ----
+    def test_page_needs_no_key(self):
+        code, headers, body = self.anon("/")
+        self.assertEqual(code, 200)
+        self.assertIn(b"<title>", body)
+        self.assertIsNone(headers["Set-Cookie"])
+
+    def test_every_api_route_needs_the_key(self):
+        for path in ("/api/runs", "/api/health", "/api/runs/" + self.run_path("run1"),
+                     "/api/diff?run=x&commit=y", "/api/file?run=%s&key=acceptance" % self.run_path("run1"),
+                     "/api/file-link?run=%s&key=html-1" % self.run_path("run1"), "/api/nope", "/favicon.ico"):
+            code, headers, body = self.anon(path)
             self.assertEqual(code, 403, path)
             self.assertEqual(json.loads(body), {"error": "missing or wrong dashboard key"})
             self.assertEqual(headers["Cache-Control"], "no-store")
-        code, headers, body = self.get("/", token=None)
-        self.assertEqual(code, 403)
-        self.assertTrue(headers["Content-Type"].startswith("text/plain"))
-        self.assertEqual(body.decode("utf-8"),
-                         "Open the dashboard with the link /pipeline-ui printed (it includes a one-time key).")
 
-    def test_wrong_key_refused(self):
+    def test_wrong_key_and_cookies_refused(self):
         self.assertEqual(self.get("/api/runs", token="wrong")[0], 403)
-        self.assertEqual(self.get("/api/runs", token=None, cookie="pui_%d=wrong" % self.port)[0], 403)
-        wrong_link = "/?t=" + "wrong"
-        code = self.get(wrong_link, token=None)
-        self.assertEqual(code[0], 403)
-        self.assertEqual(self.get("/", token=None, cookie="pui_%d=%s" % (self.port + 1, TOKEN))[0], 403)
+        for cookie in ("pui_%d=%s" % (self.port, TOKEN), "t=%s" % TOKEN):
+            self.assertEqual(self.anon("/api/runs", cookie=cookie)[0], 403, cookie)
+        old_link = self.anon("/?t=" + TOKEN)  # the round-1 link sets nothing now
+        self.assertEqual(old_link[0], 200)
+        self.assertIsNone(old_link[1]["Set-Cookie"])
 
-    def test_key_link_sets_the_port_cookie(self):
-        code, headers, _body = self.get("/?t=" + TOKEN, token=None)
-        self.assertEqual(code, 303)
-        self.assertEqual(headers["Location"], "/")
-        self.assertEqual(headers["Set-Cookie"], "pui_%d=%s; HttpOnly; SameSite=Strict; Path=/" % (self.port, TOKEN))
-        self.assertEqual(headers["Cache-Control"], "no-store")
-
-    def test_cookie_and_header_both_work(self):
-        cookie = "other=1; pui_%d=%s; theme=dark" % (self.port, TOKEN)
-        self.assertEqual(self.get("/api/runs", token=None, cookie=cookie)[0], 200)
-        self.assertEqual(self.get("/", token=None, cookie=cookie)[0], 200)
-        self.assertEqual(self.get("/api/health")[0], 200)
+    def test_no_set_cookie_anywhere(self):
+        paths = ["/", "/?t=" + TOKEN, "/api/runs", "/api/health", "/api/nope",
+                 "/api/file-link?run=%s&key=html-1" % self.run_path("run1")]
+        for path in paths:
+            for token in (TOKEN, "wrong"):
+                _code, headers, _body = self.get(path, token=token)
+                self.assertIsNone(headers["Set-Cookie"], path)
 
     def test_refused_requests_do_not_count_as_activity(self):
         self.server.last_request = 1000.0
-        self.get("/api/runs", token=None)
+        self.anon("/api/runs")
         self.get("/api/runs", token="wrong")
         self.get("/api/runs", host="evil.example:%d" % self.port)
+        self.anon("/")  # the page itself holds no data and is not activity
         self.assertEqual(self.server.last_request, 1000.0)
         self.get("/api/runs")
         self.assertGreater(self.server.last_request, 1000.0)
+
+    # ---- signed 60-second links for HTML artifacts ----
+    def test_signed_file_link_opens_the_html_report(self):
+        run = self.ids["run1"]
+        code, _headers, body = self.get("/api/file-link?run=%s&key=html-1" % self.run_path("run1"))
+        self.assertEqual(code, 200)
+        url = json.loads(body)["url"]
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        self.assertEqual(urllib.parse.urlsplit(url).path, "/api/file")
+        self.assertEqual((query["run"], query["key"]), ([run], ["html-1"]))
+        exp = int(query["exp"][0])
+        self.assertTrue(time.time() + 50 < exp <= time.time() + 61)
+        self.assertEqual(query["sig"], [self.sign(run, "html-1", exp)])
+        code, headers, body = self.anon(url)
+        self.assertEqual(code, 200)
+        self.assertEqual(headers["Content-Security-Policy"], "sandbox allow-scripts")
+        self.assertIn(b"<title>", body)
+
+    def test_bad_signatures_refused(self):
+        run, other = self.ids["run1"], self.ids["run2"]
+        now = int(time.time())
+        good = self.sign(run, "html-1", now + 60)
+        self.assertEqual(self.anon(self.file_url(run, "html-1", now + 60, good))[0], 200)
+        tampered = good[:-1] + ("0" if good[-1] != "0" else "1")
+        cases = {
+            "tampered": self.file_url(run, "html-1", now + 60, tampered),
+            "exp changed": self.file_url(run, "html-1", now + 61, good),
+            "expired": self.file_url(run, "html-1", now - 1, self.sign(run, "html-1", now - 1)),
+            "too far ahead": self.file_url(run, "html-1", now + 500, self.sign(run, "html-1", now + 500)),
+            "other run": self.file_url(other, "html-1", now + 60, good),
+            "other file": self.file_url(run, "acceptance", now + 60, good),
+            "not a number": self.file_url(run, "html-1", "soon", good),
+            "no sig": "/api/file?" + urllib.parse.urlencode({"run": run, "key": "html-1", "exp": now + 60}),
+        }
+        for name, url in cases.items():
+            code, _headers, body = self.anon(url)
+            self.assertEqual(code, 403, name)
+            self.assertEqual(json.loads(body), {"error": "missing or wrong dashboard key"}, name)
+        # a signature works for /api/file only
+        diff = "/api/diff?" + urllib.parse.urlencode({"run": run, "commit": "0" * 40, "exp": now + 60, "sig": good})
+        self.assertEqual(self.anon(diff)[0], 403)
+
+    def test_file_link_needs_a_known_file(self):
+        self.assertEqual(self.get("/api/file-link?run=%s&key=nope" % self.run_path("run1"))[0], 404)
+        self.assertEqual(self.anon("/api/file-link?run=%s&key=html-1" % self.run_path("run1"))[0], 403)
+
+    def test_referrer_policy_on_every_response(self):
+        responses = [self.anon("/"), self.get("/api/runs"), self.anon("/api/runs"), self.get("/api/nope"),
+                     self.get("/api/runs", method="POST"), self.get("/api/runs", method="PATCH"),
+                     self.get("/api/runs", host="evil.example:%d" % self.port)]
+        for code, headers, _body in responses:
+            self.assertEqual(headers.get_all("Referrer-Policy"), ["no-referrer"], code)
 
     # ---- every response is no-store; methods other than GET are refused ----
     def test_head_and_post_refused(self):
@@ -182,8 +249,8 @@ class ServerTest(unittest.TestCase):
                 self.assertEqual(body, b"")
             else:
                 self.assertEqual(json.loads(body), {"error": "method not allowed"})
-        no_key_post = self.get("/api/runs", method="POST", token=None)
-        no_key_head = self.get("/", method="HEAD", token=None)
+        no_key_post = self.anon("/api/runs", method="POST")
+        no_key_head = self.anon("/", method="HEAD")
         self.assertEqual((no_key_post[0], no_key_head[0]), (403, 403))
         self.assertEqual(self.get("/api/runs", method="POST", host="evil.example:%d" % self.port)[0], 403)
 
@@ -204,6 +271,7 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(head.startswith("HTTP/1.0 400") or head.startswith("HTTP/1.1 400"), head)
         self.assertIn("Cache-Control: no-store", head)
         self.assertIn("X-Content-Type-Options: nosniff", head)
+        self.assertIn("Referrer-Policy: no-referrer", head)
         self.assertEqual(head.count("Cache-Control"), 1)
 
     def test_success_headers_not_duplicated(self):
@@ -263,10 +331,11 @@ class CliTest(unittest.TestCase):
             first = call("start")
             self.assertIn("url", first, first)
             url = urllib.parse.urlsplit(first["url"])
-            key = (urllib.parse.parse_qs(url.query).get("t") or [None])[0]
+            key = (urllib.parse.parse_qs(url.fragment).get("k") or [None])[0]
             try:
                 self.assertFalse(first["reused"])
-                self.assertIn("?t=", first["url"])
+                self.assertIn("/#k=", first["url"])
+                self.assertNotIn("?", first["url"])
                 self.assertEqual(cli.read_state(repo, cfg=env["CLAUDE_CONFIG_DIR"])["token"], key)
                 second = call("start")
                 self.assertTrue(second["reused"])
@@ -302,7 +371,7 @@ class VersionRestartTest(unittest.TestCase):
     def test_same_version_is_reused(self):
         with self.reply(cli.plugin_version()):
             result = cli.cmd_start(self.repo, cfg=self.cfg)
-        self.assertEqual(result, {"url": "http://127.0.0.1:8799/?t=k", "pid": 4242, "reused": True})
+        self.assertEqual(result, {"url": "http://127.0.0.1:8799/#k=k", "pid": 4242, "reused": True})
         self.stop.assert_not_called()
 
     def test_older_version_is_stopped_and_replaced(self):
@@ -366,6 +435,8 @@ class StopStatusTest(unittest.TestCase):
             deadline = time.time() + 10
             while time.time() < deadline and not cli.read_state(self.repo, self.cfg):
                 time.sleep(0.05)
+        with open(cli.open_path(self.repo, self.cfg), "w", encoding="utf-8") as fh:
+            fh.write("redirect")
         try:
             state = cli.read_state(self.repo, self.cfg)
             self.assertEqual(state["port"], port)
@@ -377,6 +448,50 @@ class StopStatusTest(unittest.TestCase):
         finally:
             servers[0].shutdown()
             thread.join(10)
+        self.assertIsNone(cli.read_state(self.repo, self.cfg))
+        self.assertFalse(os.path.exists(cli.open_path(self.repo, self.cfg)))  # serve() cleanup
+
+    def test_start_open_uses_a_redirect_file(self):
+        key = secrets.token_urlsafe(32)
+        port = self.start_server(self.repo, key)
+        self.write_state(port, key)
+        opened = []
+        with mock.patch.object(cli.webbrowser, "open", side_effect=lambda url, *a, **k: opened.append(url)):
+            result = cli.cmd_start(self.repo, open_browser=True, cfg=self.cfg)
+        self.assertEqual(result["url"], "http://127.0.0.1:%d/#k=%s" % (port, key))  # the JSON line keeps it
+        path = cli.open_path(self.repo, self.cfg)
+        self.assertEqual(opened, [pathlib.Path(path).as_uri()])
+        self.assertNotIn(key, opened[0])
+        with open(path, encoding="utf-8") as fh:
+            page = fh.read()
+        self.assertIn('<meta http-equiv="refresh" content="0; url=%s">' % result["url"], page)
+        self.assertIn('<a href="%s">' % result["url"], page)
+        if os.name != "nt":
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.assertEqual(cli.cmd_stop(self.repo, self.cfg), {"stopped": True})
+        self.assertFalse(os.path.exists(path))
+
+    def test_state_without_a_usable_key_is_stale(self):
+        def bad_states():
+            base = {"pid": os.getpid(), "port": 8799, "project": os.path.abspath(self.repo)}
+            yield dict(base)
+            for token in ("", 42, None, ["k"]):
+                yield dict(base, token=token)
+
+        never = mock.patch.object(cli, "probe", side_effect=AssertionError("a keyless state was probed"))
+        with never, mock.patch.object(cli, "free_port", return_value=None):
+            for state in bad_states():
+                for command in ("start", "stop", "status"):
+                    cli.write_state(self.repo, state, self.cfg)
+                    if command == "start":
+                        result = cli.cmd_start(self.repo, cfg=self.cfg)
+                        self.assertEqual(result, {"error": "no free port in 8765-8784"}, state)  # went on to a fresh start
+                    elif command == "stop":
+                        self.assertEqual(cli.cmd_stop(self.repo, self.cfg), {"running": False}, state)
+                    else:
+                        self.assertEqual(cli.cmd_status(self.repo, self.cfg), {"running": False}, state)
+                    self.assertFalse(os.path.exists(cli.state_path(self.repo, self.cfg)), (command, state))
+        self.kill.assert_not_called()
 
     def test_wrong_key_is_never_stopped(self):
         port = self.start_server(self.repo, "theirs")
@@ -406,7 +521,7 @@ class StopStatusTest(unittest.TestCase):
         self.write_state(port, "ours")
         status = cli.cmd_status(self.repo, self.cfg)
         self.assertTrue(status["running"])
-        self.assertEqual(status["url"], "http://127.0.0.1:%d/?t=ours" % port)
+        self.assertEqual(status["url"], "http://127.0.0.1:%d/#k=ours" % port)
         self.assertEqual(cli.cmd_stop(self.repo, self.cfg), {"stopped": True})
         self.kill.assert_called_once_with(os.getpid(), cli.signal.SIGTERM)
         self.assertIsNone(cli.read_state(self.repo, self.cfg))
