@@ -42,6 +42,24 @@ class GitTest(unittest.TestCase):
         self.assertIsNone(gitinfo.commit_diff(self.repo, "HEAD"))
         self.assertIn("emi.py", gitinfo.commit_diff(self.repo, commits[1]["sha"]))
 
+    def test_git_calls_are_hardened(self):
+        calls = []
+        real = gitinfo.git
+
+        def record(repo, *args, **kwargs):
+            calls.append(args)
+            return real(repo, *args, **kwargs)
+
+        with mock.patch.object(gitinfo, "git", side_effect=record):
+            commits = gitinfo.branch_commits(self.repo, BRANCH, "master")
+            self.assertEqual(len(commits), 5)
+            self.assertIn("emi.py", gitinfo.commit_diff(self.repo, commits[1]["sha"]))
+        log = [c for c in calls if c[0] == "log"][0]
+        self.assertEqual(log[-1], "--")  # the range can never be read as a path
+        show = [c for c in calls if c[0] == "show"][0]
+        self.assertIn("--no-textconv", show)
+        self.assertLess(show.index("--no-textconv"), show.index(commits[1]["sha"]))
+
     def test_option_like_branch_rejected(self):
         self.assertEqual(gitinfo.branch_commits(self.repo, "--all", "master"), [])
 

@@ -264,8 +264,35 @@ const SORTS = {
   cost: (a, b) => (b.cost || 0) - (a.cost || 0),
   duration: (a, b) => (b.duration_s || 0) - (a.duration_s || 0),
 };
+// Start-time order with every nested agent right after its parent, recursively.
+function nested(rows) {
+  const ids = new Set(rows.map((a) => a.id));
+  const kids = new Map();
+  const roots = [];
+  for (const a of rows.slice().sort(SORTS.start)) {
+    if (a.parent && a.parent !== a.id && ids.has(a.parent)) {
+      if (!kids.has(a.parent)) kids.set(a.parent, []);
+      kids.get(a.parent).push(a);
+    } else {
+      roots.push(a);
+    }
+  }
+  const out = [];
+  const seen = new Set();
+  const visit = (a) => {
+    if (seen.has(a.id)) return;
+    seen.add(a.id);
+    out.push(a);
+    (kids.get(a.id) || []).forEach(visit);
+  };
+  roots.forEach(visit);
+  rows.slice().sort(SORTS.start).forEach(visit); // rows in a parent loop still appear once
+  return out;
+}
 function agentsTable(rows) {
-  const sorted = rows.slice().sort(SORTS[state.sort] || SORTS.start);
+  const byId = {};
+  rows.forEach((a) => { byId[a.id] = a; });
+  const sorted = state.sort === "start" ? nested(rows) : rows.slice().sort(SORTS[state.sort]);
   const sortHead = (label, key) => { const toggleSort = () => { state.sort = state.sort === key ? "start" : key; redraw(); }; return h("th", { class: "num sort", title: "Sort by " + label.toLowerCase(),
     tabindex: 0, onclick: toggleSort, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleSort(); } } }, label + (state.sort === key ? " ▾" : ""));
   };
@@ -276,7 +303,8 @@ function agentsTable(rows) {
       h("th", { class: "num hide-sm" }, "Cache read"), sortHead("Est. cost", "cost"), h("th", {}, "State"))),
     h("tbody", {}, sorted.map((a) => h("tr", { class: a.type === "orchestrator" ? "orch" : null },
       h("td", { class: "nowrap" }, a.stage_label, a.fix ? h("span", { class: "tag" }, "fix") : null),
-      h("td", {}, h("div", {}, (a.parent ? "↳ " : "") + a.type), h("div", { class: "muted small" }, a.description)),
+      h("td", {}, h("div", {}, a.parent && byId[a.parent] ? "↳ " + a.type + " (from " + byId[a.parent].type + ")"
+        : (a.parent ? "↳ " : "") + a.type), h("div", { class: "muted small" }, a.description)),
       h("td", { class: "hide-sm" }, a.model || "—"),
       h("td", { class: "hide-sm nowrap" }, fmtTime(a.started)),
       h("td", { class: "num" }, fmtDur(a.duration_s)),

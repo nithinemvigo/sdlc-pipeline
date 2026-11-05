@@ -59,6 +59,16 @@ class PageTest(unittest.TestCase):
         self.assertIn('document.querySelectorAll("[data-since]").forEach((el) => '
                       '{ el.textContent = waitingLabel(Number(el.dataset.since)); });', timer)
 
+    def test_nested_agents_follow_their_parent(self):
+        self.assertIn("function nested(rows)", self.html)
+        self.assertIn('const sorted = state.sort === "start" ? nested(rows) : rows.slice().sort(SORTS[state.sort]);',
+                      self.html)
+        body = self.html[self.html.index("function nested(rows)"):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn("kids.get(a.id)", body)  # children are visited right after their parent, recursively
+        self.assertIn("seen.has(a.id)", body)  # a parent loop cannot repeat or drop rows
+        self.assertIn('" (from " + byId[a.parent].type + ")"', self.html)
+
     def test_small_fixes(self):
         self.assertIn("overflow-wrap: anywhere", self.html)
         self.assertIn("/sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-ui", self.html)

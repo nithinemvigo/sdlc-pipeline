@@ -341,7 +341,11 @@ def cmd_start(project, open_browser=False, cfg=None):
     state = read_state(project, cfg)
     if state:
         info = health(state.get("port"), state.get("token"))
-        if _same_project(info, project):
+        if _same_project(info, project) and info.get("version") != plugin_version():
+            stopped = cmd_stop(project, cfg)  # left running by an older plugin version: replace it
+            if "error" in stopped:
+                return stopped
+        elif _same_project(info, project):
             url = _url(state["port"], state["token"])
             if open_browser:
                 webbrowser.open(url)

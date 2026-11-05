@@ -282,6 +282,43 @@ class CliTest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class VersionRestartTest(unittest.TestCase):
+    """start replaces a dashboard left running by an older plugin version."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = os.path.abspath(os.path.join(self.tmp, "repo"))
+        os.makedirs(self.repo)
+        self.cfg = os.path.join(self.tmp, "cfg")
+        cli.write_state(self.repo, {"pid": 4242, "port": 8799, "project": self.repo, "token": "k"}, self.cfg)
+        self.stop = mock.patch.object(cli, "cmd_stop", return_value={"stopped": True}).start()
+        self.no_port = mock.patch.object(cli, "free_port", return_value=None).start()  # never spawn
+        self.addCleanup(mock.patch.stopall)
+
+    def reply(self, version):
+        return mock.patch.object(cli, "health", return_value={"project": self.repo, "version": version, "pid": 4242})
+
+    def test_same_version_is_reused(self):
+        with self.reply(cli.plugin_version()):
+            result = cli.cmd_start(self.repo, cfg=self.cfg)
+        self.assertEqual(result, {"url": "http://127.0.0.1:8799/?t=k", "pid": 4242, "reused": True})
+        self.stop.assert_not_called()
+
+    def test_older_version_is_stopped_and_replaced(self):
+        with self.reply("0.0.1"):
+            result = cli.cmd_start(self.repo, cfg=self.cfg)
+        self.stop.assert_called_once_with(self.repo, self.cfg)
+        self.assertEqual(result, {"error": "no free port in 8765-8784"})  # it went on to start a new one
+
+    def test_older_version_that_cannot_be_stopped_is_reported(self):
+        self.stop.return_value = {"error": "the server on port 8799 is not this project's dashboard; not stopped"}
+        with self.reply("0.0.1"):
+            result = cli.cmd_start(self.repo, cfg=self.cfg)
+        self.assertEqual(result, self.stop.return_value)
+        self.no_port.assert_not_called()
+
+
 class StopStatusTest(unittest.TestCase):
     """stop and status trust only a server that accepts the state file's key and is this project's."""
 

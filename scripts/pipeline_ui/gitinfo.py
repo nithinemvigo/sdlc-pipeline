@@ -32,7 +32,7 @@ def branch_commits(repo, branch, base):
     merge_base = git(repo, "merge-base", base, branch)
     if merge_base is None:
         return []
-    out = git(repo, "log", "--reverse", "--format=%H%x09%aI%x09%s", "%s..%s" % (merge_base.strip(), branch))
+    out = git(repo, "log", "--reverse", "--format=%H%x09%aI%x09%s", "%s..%s" % (merge_base.strip(), branch), "--")
     if out is None:
         return []
     commits = []
@@ -54,7 +54,7 @@ def task_of(subject, numbers):
 def commit_diff(repo, sha):
     if not isinstance(sha, str) or not SHA_RE.match(sha):
         return None
-    out = git(repo, "show", "--stat", "--patch", "--no-color", "--no-ext-diff", sha, timeout=30)
+    out = git(repo, "show", "--stat", "--patch", "--no-color", "--no-ext-diff", "--no-textconv", sha, timeout=30)
     if out is None:
         return None
     if len(out) > DIFF_LIMIT:
