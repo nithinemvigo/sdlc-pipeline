@@ -3,12 +3,21 @@ import glob
 import os
 import re
 
-from .entries import tool_uses
+from .entries import message_text, tool_uses
 
 _VALUE = r"(?:\"([^\"]+)\"|'([^']+)'|(\S+))"
 REQ_RE = re.compile(r"--requirements\s+" + _VALUE)
 ROOT_RE = re.compile(r"--artifact-root\s+" + _VALUE)
 TASK_RE = re.compile(r"^task-(\d+)-(.+)\.md$")
+# a slug read from transcript text: one plain path segment, never '..' or an option
+SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+OVERVIEW_RE = re.compile(r"(?:^|[\\/\s\"'`(])docs[\\/]plans[\\/]([^\\/\s\"'`]+)[\\/]00-overview\.md\b")
+NEW_BRANCH_RE = re.compile(
+    r"(?:^|[\n;&|(])\s*git\s+(?:-C\s+\S+\s+)?(?:switch|checkout)\s+(?:-[\w-]+\s+)*?(?:-[cbB]|--create|--force-create)\s+"
+    r"[\"']?feature/([^\s\"';&|)]+)")
+PLANNER = "planner"
+WRITE_TOOLS = ("Write",)
+SHELL_TOOLS = ("Bash", "PowerShell")
 
 
 def slug_of(branch):
@@ -19,6 +28,62 @@ def slug_of(branch):
     if not slug or ".." in slug or slug.startswith(("/", "\\")):
         return None
     return slug
+
+
+def _safe(slug):
+    return slug if slug and ".." not in slug and SAFE_SLUG_RE.match(slug) else None
+
+
+def _written_overviews(entries):
+    for entry in entries:
+        for _tid, name, tool_input in tool_uses(entry):
+            path = tool_input.get("file_path")
+            if name in WRITE_TOOLS and isinstance(path, str):
+                match = OVERVIEW_RE.search(path)
+                if match:
+                    yield match.group(1)
+
+
+def _output_overviews(entries):
+    """Overview paths a planner names in its own words: its text and its hand-back message."""
+    for entry in entries:
+        texts = [message_text(entry)] if entry.get("type") == "assistant" else []
+        texts += [tool_input.get("message") for _tid, name, tool_input in tool_uses(entry)
+                  if name == "SubagentHandback"]
+        for text in texts:
+            if isinstance(text, str):
+                for match in OVERVIEW_RE.finditer(text):
+                    yield match.group(1)
+
+
+def _new_branches(entries):
+    for entry in entries:
+        for _tid, name, tool_input in tool_uses(entry):
+            command = tool_input.get("command")
+            if name in SHELL_TOOLS and isinstance(command, str):
+                for match in NEW_BRANCH_RE.finditer(command):
+                    yield match.group(1)
+
+
+def derive_slug(window, run_agents):
+    """The plan slug of a run whose transcripts name no branch, from the run's own evidence:
+    1. a Write of docs/plans/<slug>/00-overview.md (planners first, then any agent, then the
+       orchestrator), else a planner's output text naming that file;
+    2. else the feature/<slug> branch a `git switch -c` / `git checkout -b` call created.
+    Only a slug that is one plain path segment counts. None when nothing qualifies."""
+    planners = [a for a in run_agents if a.agent_type == PLANNER]
+    others = [a for a in run_agents if a.agent_type != PLANNER]
+    sources = [_written_overviews(a.entries) for a in planners]
+    sources += [_written_overviews(a.entries) for a in others]
+    sources.append(_written_overviews(window))
+    sources += [_output_overviews(a.entries) for a in planners]
+    sources.append(_new_branches(window))
+    sources += [_new_branches(a.entries) for a in run_agents]
+    for source in sources:
+        for slug in source:
+            if _safe(slug):
+                return slug
+    return None
 
 
 def _rel(repo, path):

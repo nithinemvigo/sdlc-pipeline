@@ -134,7 +134,7 @@ either). In Cursor step 1 prints `{"error": "needs-claude-code"}`, step 2 prints
 - **Title:** the first line of `<command-args>`, cut to 120 characters (`(no request text)`
   if empty).
 - **Branch:** the `gitBranch` of the latest entry in the window that is not the base branch;
-  else the base branch.
+  else the base branch; else (no entry names a branch) the fallback in §6.6.
 - **Linked runs:** runs on the same non-base branch are shown as parts of one feature
   ("resumed from <run>").
 
@@ -225,6 +225,24 @@ The table lives in `stages.py` as data, so a new agent type is a one-line change
   task `NN` when its subject matches `\btask[ -]?0*<N>\b` (case-insensitive), where `<N>` is
   the task number without leading zeros, so `task 03`, `Task 3` and `task-03` all match task
   `03`. Others are listed as "other commits".
+- **Run without a branch:** when no entry in the window carries a usable `gitBranch` (for
+  example every entry says `HEAD`, as on the 2026-11-05 EMI demo, where the repo had no
+  commit when the run started), the slug comes from evidence already in the run window, first
+  match wins:
+  1. a `Write` tool call whose `file_path` is `docs/plans/<slug>/00-overview.md`: the run's
+     `planner` agents first, then any other agent of the run, then the orchestrator; else a
+     `planner` agent's own output (its text and `SubagentHandback` message) naming that file;
+  2. else the `feature/<slug>` branch created by a `git switch -c|-C|--create` or
+     `git checkout -b|-B` call (flags such as `-q` allowed) in a `Bash` or `PowerShell` tool
+     call of the orchestrator, then of the run's agents;
+  3. else no slug, and no plan or commits, as before.
+
+  A slug taken this way must be one plain path segment (`[A-Za-z0-9][A-Za-z0-9._-]*`, no
+  `..`); anything else is ignored. If `refs/heads/feature/<slug>` exists in git, it becomes the
+  run's branch: it is shown in the run list and run view, it links runs (§6.2), and it gives
+  the commit list and the diffs. If it does not exist, the plan tasks and plan files are still
+  shown, with no commits. Nothing is written, and the git check is cached with the other git
+  queries (§9.4).
 - **Bug track:** for a `fix/` or `hotfix/` branch with no plan folder, the investigator's
   mini-plan (`docs/bugs/<slug>*.md`) is shown in place of the task list, and every commit is
   listed under it.

@@ -32,6 +32,7 @@ class Dashboard(object):
         self.lock = threading.Lock()
         self._folders = None
         self._ttl = {}
+        self._derived = {}  # run id -> (evidence size, slug) for runs whose transcripts name no branch
 
     # ---- public API: each call holds the lock ----
     def runs(self):
@@ -52,7 +53,7 @@ class Dashboard(object):
             item = self._find(run_id)
             if not item or item["run"] is None:
                 return None
-            if sha not in set(c["sha"] for c in (self._commits(item["run"].branch) or [])):
+            if sha not in set(c["sha"] for c in (self._commits(item["branch"]) or [])):
                 return None
             return gitinfo.commit_diff(self.repo, sha)
 
@@ -61,9 +62,8 @@ class Dashboard(object):
             item = self._find(run_id)
             if not item or item["run"] is None:
                 return None
-            run = item["run"]
-            items = artifacts.artifact_list(self.repo, artifacts.slug_of(run.branch), run.entries,
-                                            bug_track=artifacts.bug_track(run.branch))
+            items = artifacts.artifact_list(self.repo, item["slug"], item["run"].entries,
+                                            bug_track=artifacts.bug_track(item["branch"]))
             return artifacts.resolve(self.repo, items, key)
 
     # ---- collection ----
@@ -143,12 +143,15 @@ class Dashboard(object):
         return loaded, skipped
 
     def _build(self, run, run_agents, main, now):
-        item = {"run": run, "agents": run_agents, "main": main, "checkpoints": [], "orchestrator": {}}
+        item = {"run": run, "agents": run_agents, "main": main, "checkpoints": [], "orchestrator": {},
+                "branch": run.branch, "slug": artifacts.slug_of(run.branch)}
         summary = {"id": run.run_id, "session": run.session_id, "command": run.command, "flow": run.flow,
                    "title": run.title, "branch": run.branch, "started": run.started_at, "status": "error",
                    "waiting_since": None, "duration_s": None, "tokens": usage_mod.Usage().to_dict(),
                    "cost": None, "cost_complete": False, "linked": [], "resumed_from": None}
         try:
+            item["branch"], item["slug"] = self._branch_and_slug(run, run_agents)
+            summary["branch"] = item["branch"]
             stages.place_agents(run_agents)
             item["checkpoints"] = checkpoints.find_checkpoints(run.entries)
             state, since = status_mod.run_status(run, run_agents, item["checkpoints"], main.mtime, now)
@@ -164,6 +167,22 @@ class Dashboard(object):
             summary["errors"] = {"run": _error(exc)}
         item["summary"] = summary
         return item
+
+    def _branch_and_slug(self, run, run_agents):
+        """(branch, slug). A run whose transcripts name no branch takes its slug from its own
+        evidence (artifacts.derive_slug), and feature/<slug> as its branch when git has it."""
+        if run.branch:
+            return run.branch, artifacts.slug_of(run.branch)
+        size = (len(run.entries), tuple((a.agent_id, len(a.entries)) for a in run_agents))
+        hit = self._derived.get(run.run_id)
+        if hit is None or hit[0] != size:
+            hit = self._derived[run.run_id] = (size, artifacts.derive_slug(run.entries, run_agents))
+        slug = hit[1]
+        if slug is None:
+            return "", None
+        branch = "feature/" + slug
+        exists = self._cached(("exists", branch), lambda: gitinfo.branch_exists(self.repo, branch))
+        return (branch if exists else ""), slug
 
     def _link(self, items):
         groups = {}
@@ -196,9 +215,9 @@ class Dashboard(object):
         section("stages", lambda: stages.build_stages(run.flow, item["agents"], out["status"]))
         section("agents", lambda: self._agent_rows(item))
         section("checkpoints", lambda: item["checkpoints"])
-        section("tasks", lambda: self._tasks(run.branch))
+        section("tasks", lambda: self._tasks(item["branch"], item["slug"]))
         section("artifacts", lambda: [dict(a) for a in artifacts.artifact_list(
-            self.repo, artifacts.slug_of(run.branch), run.entries, bug_track=artifacts.bug_track(run.branch))])
+            self.repo, item["slug"], run.entries, bug_track=artifacts.bug_track(item["branch"]))])
         section("warnings", lambda: self._warnings(item))
         if errors:
             out["errors"] = errors
@@ -244,8 +263,8 @@ class Dashboard(object):
             return None if base is None else gitinfo.branch_commits(self.repo, branch, base)
         return self._cached(("commits", branch), build)
 
-    def _tasks(self, branch):
-        slug = artifacts.slug_of(branch)
+    def _tasks(self, branch, slug=None):
+        slug = artifacts.slug_of(branch) if slug is None else slug
         plan = self._cached(("tasks", slug), lambda: artifacts.plan_tasks(self.repo, slug))
         tasks = [dict(task, commits=[]) for task in plan]
         commits = self._commits(branch)

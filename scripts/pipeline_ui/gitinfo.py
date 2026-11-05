@@ -25,6 +25,13 @@ def base_branch(repo):
     return None
 
 
+def branch_exists(repo, branch):
+    """True when refs/heads/<branch> exists. An empty or option-like name is never looked up."""
+    if not branch or branch.startswith("-"):
+        return False
+    return git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch) is not None
+
+
 def branch_commits(repo, branch, base):
     """Commits on branch since it left base, oldest first."""
     if not branch or not base or branch == base or branch.startswith("-"):
