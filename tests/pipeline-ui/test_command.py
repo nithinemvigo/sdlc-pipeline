@@ -11,6 +11,7 @@ import unittest
 import fixture_builder as fb
 
 COMMAND = os.path.join(fb.REPO_ROOT, "commands", "pipeline-ui.md")
+DASHBOARD_COMMAND = os.path.join(fb.REPO_ROOT, "commands", "pipeline-dashboard.md")
 FAKE_SCRIPT = "import json, os, sys\nprint(json.dumps({'script': os.path.abspath(__file__), 'argv': sys.argv[1:]}))\n"
 
 
@@ -55,9 +56,32 @@ class CommandTest(unittest.TestCase):
     def test_versions(self):
         for relative in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json"):
             with open(os.path.join(fb.REPO_ROOT, relative), encoding="utf-8") as fh:
-                self.assertEqual(json.load(fh)["version"], "3.5.0", relative)
+                self.assertEqual(json.load(fh)["version"], "3.5.1", relative)
         with open(os.path.join(fb.REPO_ROOT, ".claude-plugin", "marketplace.json"), encoding="utf-8") as fh:
-            self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.5.0")
+            self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.5.1")
+
+
+class DashboardCommandTest(unittest.TestCase):
+    """/pipeline-dashboard opens or stops the dashboard from any session, without a pipeline run."""
+
+    def setUp(self):
+        with open(DASHBOARD_COMMAND, encoding="utf-8") as fh:
+            self.text = fh.read()
+        with open(COMMAND, encoding="utf-8") as fh:
+            self.ui_blocks = bash_blocks(fh.read())
+
+    def test_frontmatter(self):
+        self.assertTrue(self.text.startswith("---\ndescription: "))
+        self.assertIn("\nargument-hint: ", self.text.split("\n---\n", 1)[0])
+
+    def test_same_start_and_stop_blocks_as_pipeline_ui(self):
+        # byte-identical, so CommandScriptTest's plugin lookup checks cover this command too
+        self.assertEqual(bash_blocks(self.text), self.ui_blocks)
+
+    def test_never_starts_a_pipeline(self):
+        self.assertNotIn("Skill", self.text)
+        self.assertNotIn("sdlc-pipeline:<flow>", self.text)
+        self.assertNotIn("AskUserQuestion", self.text)
 
 
 class CommandScriptTest(unittest.TestCase):

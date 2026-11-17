@@ -42,13 +42,14 @@ All new, except the README and the three version fields.
 | File | Purpose |
 |---|---|
 | `commands/pipeline-ui.md` | The `/pipeline-ui` command (section 5). |
+| `commands/pipeline-dashboard.md` | The `/pipeline-dashboard` command (section 5.3): opens or stops the dashboard only. |
 | `scripts/pipeline-ui.py` | CLI: `start`, `serve`, `stop`, `status`. Starts the server and holds the HTTP handlers. |
 | `scripts/pipeline_ui/` | Package with one module per reader, so each is testable on its own: `transcripts.py`, `runs.py`, `agents.py`, `stages.py`, `checkpoints.py`, `usage.py`, `gitinfo.py`, `artifacts.py`, `status.py`. |
 | `scripts/pipeline-ui.html` | The page: vanilla HTML/CSS/JS in one file, no external requests. |
 | `scripts/pipeline-ui-prices.json` | Editable per-model price table for the cost estimate. |
 | `tests/pipeline-ui/` | Tests and hand-written fixtures (section 12). |
 | `README.md` | New "Watching a run" section. |
-| `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.cursor-plugin/plugin.json` | Version 3.4.1 → 3.5.0. |
+| `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.cursor-plugin/plugin.json` | Version 3.4.1 → 3.5.0; 3.5.1 for the hidden-console fix and `/pipeline-dashboard`. |
 
 Everything must run on **Python 3.8+**, matching the README's existing requirement.
 
@@ -95,6 +96,13 @@ Cursor is detected by `CLAUDECODE` not being `1` (Claude Code sets `CLAUDECODE=1
 tool; `CLAUDE_PLUGIN_ROOT` is not a usable signal, since Claude Code does not set it there
 either). In Cursor step 1 prints `{"error": "needs-claude-code"}`, step 2 prints
 `The dashboard needs Claude Code; continuing without it.`, and steps 3–4 run as normal.
+
+### 5.3 `/pipeline-dashboard`
+
+Opens the dashboard for the current project from any Claude Code session, without starting a
+run: it runs the same start block as Step 1 (byte-identical, so the same plugin lookup) and
+prints `Dashboard: <url>`. With the argument `stop` it runs the same stop block as
+`/pipeline-ui`. It never invokes a flow, asks nothing, and changes nothing else.
 
 ## 6. Where the data comes from
 
@@ -302,8 +310,11 @@ Both *waiting for you* rules show how long it has waited (`waiting for you · 3 
 ### 9.1 CLI
 
 - `start --project <path> [--open]`: if a server for this project is already healthy,
-  reuse it. Otherwise spawn `serve` as a detached process (`DETACHED_PROCESS` on Windows,
-  `start_new_session` elsewhere), wait up to 5 s for `/api/health`, then print the JSON line
+  reuse it. Otherwise spawn `serve` in the background: on Windows with
+  `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` (a hidden console of its own), elsewhere with
+  `start_new_session`. Not `DETACHED_PROCESS`: a server with no console makes Windows open a
+  new console window for every console program it runs, so each `git` query flashed a window
+  up. Every `git` call also passes `CREATE_NO_WINDOW` on Windows. Then wait up to 5 s for `/api/health`, then print the JSON line
   from 5.1. `--open` does not pass the URL to the browser (on Linux a process's argv is
   readable by other users): it writes `<ui dir>/<digest>-open.html` (0600 on POSIX), a
   meta-refresh and a link to the `#k=` URL, and opens that file's `file://` URI. The file is

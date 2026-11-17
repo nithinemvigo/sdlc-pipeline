@@ -5,6 +5,8 @@ import os
 import re
 import subprocess
 
+from .gitinfo import NO_WINDOW
+
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 KEPT_TYPES = ("user", "assistant")
 FALLBACK_FILES_PER_FOLDER = 3
@@ -28,7 +30,7 @@ def _norm(path):
 def worktree_paths(repo):
     try:
         proc = subprocess.run(["git", "-C", repo, "worktree", "list", "--porcelain"],
-                              capture_output=True, timeout=10)
+                              capture_output=True, timeout=10, **NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return []
     if proc.returncode != 0:

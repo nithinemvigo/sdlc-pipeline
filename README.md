@@ -157,6 +157,10 @@ The requirements agent asks you only about major gaps (purpose, users, scope, ma
 (`pipeline-all`, `pipeline` or `pipeline-parallel`), then runs that flow exactly as if you had
 typed it. Add `--flow pipeline-all` to skip the question.
 
+To open the dashboard from any Claude Code session without starting a run, use
+`/sdlc-pipeline:pipeline-dashboard`; `/sdlc-pipeline:pipeline-dashboard stop` stops it. It
+shows the runs of the project that session is in.
+
 The dashboard refreshes every few seconds and shows:
 
 - every pipeline run in this repository, newest first, with its status (*running*, *waiting for
@@ -178,9 +182,9 @@ it can read this project's runs while the dashboard is running. The key changes 
 dashboard starts. Opening the dashboard address without the key shows a note to use the printed
 link.
 
-It stops by itself after two hours with nobody viewing it. To stop it sooner, ask Claude to stop
-the pipeline dashboard: Claude runs the stop step from `/pipeline-ui`, which finds the plugin
-folder itself, so it works without `CLAUDE_PLUGIN_ROOT`.
+It stops by itself after two hours with nobody viewing it. To stop it sooner, run
+`/sdlc-pipeline:pipeline-dashboard stop`, or ask Claude to stop the pipeline dashboard. Both
+find the plugin folder themselves, so they work without `CLAUDE_PLUGIN_ROOT`.
 
 Cursor does not write Claude Code transcripts, so in Cursor `/pipeline-ui` skips the dashboard
 and runs the flow as normal. The transcript format is not a published contract: if a Claude

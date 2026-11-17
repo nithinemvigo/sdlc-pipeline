@@ -388,6 +388,25 @@ class VersionRestartTest(unittest.TestCase):
         self.no_port.assert_not_called()
 
 
+class SpawnTest(unittest.TestCase):
+    def test_server_gets_a_hidden_console_not_a_detached_one(self):
+        """DETACHED_PROCESS leaves the server without a console, so Windows opens a window for
+        every console program it runs (git). A hidden console is inherited by those children."""
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        proc = mock.Mock(pid=1, returncode=1)
+        proc.poll.return_value = 1
+        with mock.patch.object(cli, "free_port", return_value=8790),                 mock.patch.object(cli.subprocess, "Popen", return_value=proc) as popen:
+            result = cli.cmd_start(tmp, cfg=os.path.join(tmp, "cfg"))
+        self.assertIn("error", result)
+        options = popen.call_args[1]
+        if os.name == "nt":
+            self.assertEqual(options["creationflags"] & 0x08000000, 0x08000000)  # CREATE_NO_WINDOW
+            self.assertEqual(options["creationflags"] & 0x00000008, 0)  # not DETACHED_PROCESS
+        else:
+            self.assertTrue(options["start_new_session"])
+
+
 class StopStatusTest(unittest.TestCase):
     """stop and status trust only a server that accepts the state file's key and is this project's."""
 

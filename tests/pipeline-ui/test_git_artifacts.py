@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 import fixture_builder as fb
-from pipeline_ui import artifacts, dashboard, gitinfo
+from pipeline_ui import artifacts, dashboard, gitinfo, transcripts
 
 BRANCH = "feature/calculate-emi"
 
@@ -147,6 +147,24 @@ class ArtifactsTest(unittest.TestCase):
         self.assertTrue(path.endswith("00-overview.md"))
         self.assertEqual(kind, "md")
         self.assertIsNone(artifacts.resolve(self.repo, items, "../../etc/passwd"))
+
+
+class NoConsoleWindowTest(unittest.TestCase):
+    """The detached dashboard has no console; on Windows each git call would flash a new one."""
+    EXPECTED = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
+
+    def flags(self, call):
+        with mock.patch("subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=b"")
+            call()
+        self.assertEqual(run.call_count, 1)
+        return run.call_args[1].get("creationflags", 0)
+
+    def test_git_queries_open_no_window(self):
+        self.assertEqual(self.flags(lambda: gitinfo.git("C:/r", "status")), self.EXPECTED)
+
+    def test_worktree_list_opens_no_window(self):
+        self.assertEqual(self.flags(lambda: transcripts.worktree_paths("C:/r")), self.EXPECTED)
 
 
 if __name__ == "__main__":

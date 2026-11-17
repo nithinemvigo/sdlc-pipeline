@@ -403,7 +403,10 @@ def cmd_start(project, open_browser=False, cfg=None):
     with open(log_path(project, cfg), "ab") as log:
         options = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": log, "close_fds": True}
         if os.name == "nt":
-            options["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP: a hidden console of its own, which the git
+            # processes it starts inherit. DETACHED_PROCESS (no console) made Windows open a console
+            # window for every git call, so windows flashed up whenever a run was opened.
+            options["creationflags"] = 0x08000000 | 0x00000200
         else:
             options["start_new_session"] = True
         proc = subprocess.Popen(command, **options)

@@ -1,7 +1,11 @@
 """Read-only git queries. Every call uses an argument list, never a shell."""
+import os
 import re
 import subprocess
 
+# The dashboard server runs without a visible console; on Windows a console program it starts
+# (git) would otherwise open a window of its own, which flashes up on every request.
+NO_WINDOW = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)} if os.name == "nt" else {}
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIFF_LIMIT = 1000000
 
@@ -9,7 +13,8 @@ DIFF_LIMIT = 1000000
 def git(repo, *args, **kwargs):
     timeout = kwargs.get("timeout", 15)
     try:
-        proc = subprocess.run(["git", "-C", repo] + list(args), capture_output=True, timeout=timeout)
+        proc = subprocess.run(["git", "-C", repo] + list(args), capture_output=True, timeout=timeout,
+                              **NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return None
     if proc.returncode != 0:
