@@ -1,6 +1,6 @@
 ---
 description: Open (or stop) the local run dashboard for this project, from any Claude Code session, without starting a pipeline. The dashboard is read-only and shows every /pipeline-dashboard, /pipeline-all, /pipeline and /pipeline-parallel run.
-argument-hint: [stop]
+argument-hint: "[stop]"
 ---
 
 # /pipeline-runs — open the run dashboard

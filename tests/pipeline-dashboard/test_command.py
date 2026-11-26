@@ -61,6 +61,26 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.6.0")
 
 
+class FrontmatterYamlTest(unittest.TestCase):
+    """An unquoted frontmatter value starting with a YAML indicator ([ { & * ! | > % @ `) breaks
+    or changes the parse; Claude Code then loads the command with empty metadata."""
+
+    INDICATOR = re.compile(r"^([\w-]+):[ \t]+([\[\]{}&*!|>%@`])")
+
+    def test_no_unquoted_value_starts_with_a_yaml_indicator(self):
+        folder = os.path.join(fb.REPO_ROOT, "commands")
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".md"):
+                continue
+            with open(os.path.join(folder, name), encoding="utf-8") as fh:
+                text = fh.read()
+            if not text.startswith("---\n"):
+                continue
+            header = text[4:].split("\n---\n", 1)[0]
+            for line in header.splitlines():
+                self.assertIsNone(self.INDICATOR.match(line), "%s: %s" % (name, line))
+
+
 class RunsCommandTest(unittest.TestCase):
     """/pipeline-runs opens or stops the dashboard from any session, without a pipeline run."""
 

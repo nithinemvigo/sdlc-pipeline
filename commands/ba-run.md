@@ -1,6 +1,6 @@
 ---
 description: Run the complete BA Requirements pipeline - atomic requirements, gap analysis and triage, development stories, enrichment and the consolidated HTML report (BA Requirements, master command)
-argument-hint: [--requirements <path> --artifact-root <dir>]
+argument-hint: "[--requirements <path> --artifact-root <dir>]"
 allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), Bash(python3:*), Bash(py:*)
 ---
 
