@@ -12,7 +12,7 @@ from pipeline_dashboard.dashboard import Dashboard
 from pipeline_dashboard.timeutil import parse_ts
 
 
-NL, TAB, BS = chr(10), chr(9), chr(92)
+NL, TAB, BS, CR = chr(10), chr(9), chr(92), chr(13)
 
 
 def _agent(agent_type, transcript):
@@ -208,6 +208,30 @@ class ShellParsingTest(unittest.TestCase):
                               ("git fetch && git switch -c feature/and", "and")):
             self.assertEqual(_derive(command), slug, command)
         self.assertIsNone(_derive("echo then git switch -c feature/no"))
+
+    def test_a_command_does_not_continue_across_a_newline(self):
+        # two separate commands: `git --no-pager`, then `switch ...` (not a git call)
+        self.assertIsNone(_derive("git --no-pager" + NL + "switch -c feature/split"))
+        self.assertIsNone(_derive("git -C x;" + NL + "switch -c feature/split2"))
+
+    def test_line_continuations_still_join_a_command(self):
+        self.assertEqual(_derive("git " + BS + NL + "  switch -c feature/cont"), "cont")
+        self.assertEqual(_derive("git `" + NL + "  switch -c feature/pscont", "PowerShell"), "pscont")
+
+    def test_many_newlines_or_chained_options_take_linear_time(self):
+        for command in (NL * 20000, ";git -C x" * 20000, NL.join(["@'", "x", "'@"] * 5000)):
+            for tool in ("Bash", "PowerShell"):
+                started = time.time()
+                self.assertIsNone(_derive(command, tool))
+                self.assertLess(time.time() - started, 1.0, "%s, %d characters" % (tool, len(command)))
+
+    def test_an_unclosed_quoted_branch_name_is_not_a_branch(self):
+        self.assertIsNone(_derive('git switch -c "feature/uq'))
+        self.assertIsNone(_derive("git switch -c 'feature/uq", "PowerShell"))
+
+    def test_heredoc_in_a_crlf_command_ends_at_its_delimiter(self):
+        command = (CR + NL).join(["cat <<EOF", "text", "EOF", "git switch -c feature/crlf"])
+        self.assertEqual(_derive(command), "crlf")
 
 
 class NoBranchDashboardTest(unittest.TestCase):
