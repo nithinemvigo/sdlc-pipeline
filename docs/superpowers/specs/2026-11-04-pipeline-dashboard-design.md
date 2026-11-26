@@ -442,11 +442,11 @@ start. The plan folder and git results are cached for 5 seconds.
 - **Referrer-Policy: no-referrer** on every response.
 - **`--open` uses a redirect file** (0600 on POSIX) instead of putting the key on the
   browser's command line.
-- **Residual risks:** the key appears in the transcript of every Claude Code session that opened the dashboard (the JSON line
-  and `Dashboard: <url>`) and in the browser's history (the `#k=` URL), both the user's own
-  data; any process running as the same user can read the state file, the transcript or the
-  history, and so the key. The key protects against other accounts and web pages, not against
-  the user's own processes.
+- **Residual risks:** the key appears in the transcript of every Claude Code session that opened the
+  dashboard (the JSON line and `Dashboard: <url>`) and in the browser's history (the `#k=` URL),
+  both the user's own data; any process running as the same user can read the state file, the
+  transcript or the history, and so the key. The key protects against other accounts and web pages,
+  not against the user's own processes.
 - **No port sharing on Windows:** the server does not set `SO_REUSEADDR` there and sets
   `SO_EXCLUSIVEADDRUSE`, so no second socket can bind a port the dashboard is listening on.
 - The CLI's own health checks bypass any `HTTP_PROXY` setting.

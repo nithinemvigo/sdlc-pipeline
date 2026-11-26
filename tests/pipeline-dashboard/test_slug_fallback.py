@@ -2,6 +2,7 @@
 import os
 import shutil
 import tempfile
+import time
 import unittest
 
 import fixture_builder as fb
@@ -119,6 +120,96 @@ class DeriveSlugTest(unittest.TestCase):
         self.assertIsNone(artifacts.derive_slug(_bash("git status"), []))
 
 
+def _derive(command, tool="Bash"):
+    return artifacts.derive_slug(_bash(command, tool=tool), [])
+
+
+class ShellParsingTest(unittest.TestCase):
+    """The branch fallback reads each command with its own shell's quote and heredoc rules."""
+
+    def test_powershell_quotes(self):
+        repo = '"C:' + BS + 'repo' + BS + '"'  # a trailing backslash does not escape in PowerShell
+        for command, slug in (("git -C " + repo + ' switch -c feature/ps2; echo "x"', "ps2"),
+                              ("Set-Location " + repo + '; git switch -c feature/ps; Write-Output "done"', "ps"),
+                              ('echo "a `" b"; git switch -c feature/bt', "bt"),
+                              ("echo 'it''s'; git switch -c feature/psq", "psq"),
+                              ("git switch -c 'feature/sq'", "sq")):
+            self.assertEqual(_derive(command, "PowerShell"), slug, command)
+
+    def test_powershell_here_strings_are_data(self):
+        single = NL.join(["$m = @'", "don't", "git switch -c feature/hs2", "'@"])
+        double = NL.join(['$m = @"', 'he said "hi', "git switch -c feature/hs", '"@'])
+        for command in (single, double):
+            self.assertIsNone(_derive(command, "PowerShell"), command)
+            after = NL.join([command + " | Out-File x", "git switch -c feature/real"])
+            self.assertEqual(_derive(after, "PowerShell"), "real", after)
+
+    def test_an_unclosed_quote_runs_to_the_end(self):
+        self.assertIsNone(_derive('echo "abc' + NL + "git switch -c feature/unq"))
+        self.assertIsNone(_derive("echo 'abc" + NL + "git switch -c feature/unq", "PowerShell"))
+
+    def test_unclosed_quotes_take_linear_time(self):
+        for tool, command in (("Bash", 'echo "' + (BS + '"') * 20000),
+                              ("Bash", 'echo "' + (BS + '"') * 20000 + BS),
+                              ("PowerShell", 'echo "' + '`"' * 20000),
+                              ("PowerShell", 'echo "' + '`"' * 20000 + "`")):
+            started = time.time()
+            self.assertIsNone(_derive(command, tool))
+            self.assertLess(time.time() - started, 1.0, "%s, %d characters" % (tool, len(command)))
+
+    def test_claude_commit_heredoc_inside_a_quoted_subshell(self):
+        command = NL.join(['git commit -m "$(cat <<' + "'EOF'", "fix: it's",
+                           "git switch -c feature/hd", "EOF", ')" && git switch -c feature/ok'])
+        self.assertEqual(_derive(command), "ok")
+
+    def test_heredoc_delimiter_with_a_dash(self):
+        self.assertIsNone(_derive(NL.join(["cat <<'END-MSG'", "git switch -c feature/dd", "END-MSG", ""])))
+
+    def test_heredoc_delimiter_escaped_with_a_backslash(self):
+        self.assertIsNone(_derive(NL.join(["cat <<" + BS + "EOF", "git switch -c feature/bs", "EOF", ""])))
+
+    def test_here_string_is_not_a_heredoc(self):
+        self.assertEqual(_derive(NL.join(['grep x <<< "y"', "git switch -c feature/hstr"])), "hstr")
+
+    def test_bit_shift_is_not_a_heredoc(self):
+        self.assertEqual(_derive(NL.join(["echo $((1<<2))", "git switch -c feature/shift"])), "shift")
+
+    def test_plain_heredoc_ends_only_at_the_exact_delimiter(self):
+        for line in ("  EOF", TAB + "EOF", "EOF "):
+            command = NL.join(["cat <<EOF", line, "git switch -c feature/early", "EOF"])
+            self.assertIsNone(_derive(command), command)
+
+    def test_dash_heredoc_ends_at_a_tab_indented_delimiter_only(self):
+        spaced = NL.join(["cat <<-END", "  END", "git switch -c feature/sp", TAB + TAB + "END"])
+        self.assertIsNone(_derive(spaced))
+        self.assertEqual(_derive(NL.join([spaced, "git switch -c feature/after"])), "after")
+
+    def test_an_unclosed_heredoc_runs_to_the_end(self):
+        self.assertIsNone(_derive(NL.join(["cat <<EOF", "git switch -c feature/unterm"])))
+
+    def test_mask_character_in_the_command(self):
+        mask = chr(0xE000)
+        self.assertIsNone(_derive("git switch -c " + mask + "7" + mask))
+        self.assertIsNone(_derive("echo 'feature/forged'; git switch -c " + mask + "0" + mask))
+        self.assertIsNone(_derive("echo 'feature/forged'; git switch -c " + mask + "0" + mask, "PowerShell"))
+
+    def test_short_options(self):
+        for command in ("git checkout -b=feature/eq", "git switch -c=feature/eq",
+                        "git switch -b feature/x", "git checkout -c feature/x"):
+            self.assertIsNone(_derive(command), command)
+        for command, slug in (("git switch -C feature/fc", "fc"),
+                              ("git switch --force-create=feature/ff", "ff")):
+            self.assertEqual(_derive(command), slug, command)
+
+    def test_command_after_a_shell_keyword_or_brace(self):
+        for command, slug in (("if true; then git switch -c feature/th; fi", "th"),
+                              ("for x in a; do git switch -c feature/lp; done", "lp"),
+                              ("{ git switch -c feature/br; }", "br"),
+                              ("git fetch && git switch -c feature/and", "and")):
+            self.assertEqual(_derive(command), slug, command)
+        self.assertIsNone(_derive("echo then git switch -c feature/no"))
+
+
 class NoBranchDashboardTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -174,16 +265,18 @@ class NoBranchDashboardTest(unittest.TestCase):
             self.assertEqual(d["tasks"]["slug"], "orphan")
             self.assertEqual([(t["id"], t["commits"]) for t in d["tasks"]["tasks"]], [("01", [])])
             self.assertEqual(d["tasks"]["other_commits"], [])
+            keys = [a["key"] for a in d["artifacts"]]  # the plan files are still artifacts
+            self.assertIn("plan-overview", keys)
+            self.assertIn("task-01", keys)
         finally:
             shutil.rmtree(os.path.join(self.repo, "docs", "plans", "orphan"), ignore_errors=True)
 
     def test_branchless_runs_deriving_the_same_branch_are_linked(self):
+        # the session whose file name sorts last started first: the order must come from start times
         cfg = os.path.join(self.tmp, "cfg-link")
-        first = fb.no_branch_run(cfg, self.repo, session_id="sess-l1", checkout=False,
-                                 mtime=parse_ts(fb.ts(50)))
-        second = fb.no_branch_run(cfg, self.repo, session_id="sess-l2", checkout=False,
-                                  mtime=parse_ts(fb.ts(55)))
-        now = parse_ts(fb.ts(56))
+        first = fb.no_branch_run(cfg, self.repo, session_id="sess-l2", checkout=False, start=46)
+        second = fb.no_branch_run(cfg, self.repo, session_id="sess-l1", checkout=False, start=48)
+        now = parse_ts(fb.ts(58))
         dash = Dashboard(self.repo, cfg=cfg, prices=self.prices, clock=lambda: now)
         by_id = dict((r["id"], r) for r in dash.runs()["runs"])
         self.assertEqual(set(by_id), {first, second})
@@ -207,19 +300,6 @@ class NoBranchDashboardTest(unittest.TestCase):
             fh.write(late.lines[-1] + NL)
         d = dash.run(run_id)
         self.assertEqual((d["branch"], d["tasks"]["slug"]), ("feature/calculate-emi", "calculate-emi"))
-
-    def test_plan_files_are_artifacts_when_the_slug_has_no_git_branch(self):
-        fb.write_file(self.repo, "docs/plans/orphan2/00-overview.md", "# Plan" + NL)
-        fb.write_file(self.repo, "docs/plans/orphan2/task-01-only.md", "# Task 01" + NL)
-        try:
-            dash, run_id = self.board("cfg-orphan2", slug="orphan2", checkout=False)
-            d = dash.run(run_id)
-            self.assertEqual(d["branch"], "")
-            keys = [a["key"] for a in d["artifacts"]]
-            self.assertIn("plan-overview", keys)
-            self.assertIn("task-01", keys)
-        finally:
-            shutil.rmtree(os.path.join(self.repo, "docs", "plans", "orphan2"), ignore_errors=True)
 
     def test_no_evidence_keeps_todays_behaviour(self):
         dash, run_id = self.board("cfg-none", planner_write=False, checkout=False)

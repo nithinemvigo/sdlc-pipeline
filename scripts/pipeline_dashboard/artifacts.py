@@ -17,16 +17,22 @@ OVERVIEW_PATH_RE = re.compile(_PATH_PREFIX + r"\Z")  # a Write's file_path ends 
 # a git command that creates a feature branch, after heredoc bodies and quoted strings were masked
 _MASK = "\uE000"
 _GIT_OPTION = (r"(?:-[Cc]\s+\S+|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+|--[a-z][\w-]*(?:=\S+)?|-[pP])\s+")
+_COMMAND_START = r"(?:^|[\n;&|({])\s*(?:(?:then|do)\s+)?"
+_OPTIONS = r"(?:-[\w-]+\s+)*?"
+_CREATE = (r"(?:switch\s+" + _OPTIONS + r"(?:-[cC]\s+|--(?:force-)?create(?:\s+|=))"
+           r"|checkout\s+" + _OPTIONS + r"-[bB]\s+)")
 NEW_BRANCH_RE = re.compile(
-    r"(?:^|[\n;&|(])\s*git\s+(?:" + _GIT_OPTION + r")*(?:switch|checkout)\s+(?:-[\w-]+\s+)*?"
-    r"(?:-[cbB]|--create|--force-create)(?:\s+|=)"
-    r"(?:feature/([^\s\"';&|)" + _MASK + r"]+)|" + _MASK + r"(\d+)" + _MASK + r")")
-HEREDOC_RE = re.compile(r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n.*?(?:^[ \t]*\2[ \t]*$|\Z)",
-                        re.DOTALL | re.MULTILINE)
-QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", re.DOTALL)
+    _COMMAND_START + r"git\s+(?:" + _GIT_OPTION + r")*" + _CREATE
+    + r"(?:feature/([^\s\"';&|)" + _MASK + r"]+)|" + _MASK + r"(\d+)" + _MASK + r")")
+# Bash: `<<DELIM`, `<<-DELIM`, `<<'DELIM'`, `<<"DELIM"` or `<<\DELIM`; not `<<<` and not `1<<2`
+BASH_HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(?:\\|(['\"]?))(?!\d)([\w.-]+)(?(2)\2)")
+POWERSHELL_HERE_STRING_RE = re.compile(r"@(['\"])[ \t]*\r?\n.*?(?:^\1@|\Z)", re.DOTALL | re.MULTILINE)
+# A quote left open runs to the end of the command. The only groups are the closing quotes.
+BASH_QUOTED_RE = re.compile(r"'[^']*(?:(')|\Z)|\"(?:[^\"\\]|\\.?)*(?:(\")|\Z)", re.DOTALL)
+POWERSHELL_QUOTED_RE = re.compile(r"'(?:[^']|'')*(?:(')|\Z)|\"(?:[^\"`]|`.?|\"\")*(?:(\")|\Z)",
+                                  re.DOTALL)
 PLANNER = "planner"
 WRITE_TOOLS = ("Write",)
-SHELL_TOOLS = ("Bash", "PowerShell")
 
 
 def slug_of(branch):
@@ -65,29 +71,60 @@ def _output_overviews(entries):
                     yield match.group(1)
 
 
-def _mask_quotes(command):
+def _strip_bash_heredocs(command):
+    """The command without heredoc bodies: each body, from the line after `<<DELIM` through the
+    line that is exactly DELIM (tab-indented for `<<-`), or to the end when that line never comes."""
+    parts, pos = [], 0
+    while True:
+        match = BASH_HEREDOC_RE.search(command, pos)
+        newline = command.find("\n", match.end()) if match else -1
+        if newline < 0:  # no more heredocs, or one without a body
+            break
+        body = newline + 1
+        indent = r"\t*" if match.group(1) else ""
+        end = re.compile(r"^" + indent + re.escape(match.group(3)) + r"$", re.MULTILINE).search(command, body)
+        parts.append(command[pos:match.start()] + " " + command[match.end():body])
+        pos = end.end() if end else len(command)
+    parts.append(command[pos:])
+    return "".join(parts)
+
+
+def _strip_powershell_here_strings(command):
+    """The command without here-strings: `@'` or `@"` ending a line, through a line starting `'@` or `"@`."""
+    return POWERSHELL_HERE_STRING_RE.sub(" ", command)
+
+
+# per shell tool: how to drop multi-line data, and what a quoted string is
+SHELLS = {"Bash": (_strip_bash_heredocs, BASH_QUOTED_RE),
+          "PowerShell": (_strip_powershell_here_strings, POWERSHELL_QUOTED_RE)}
+
+
+def _mask_quotes(command, shell):
     """The command without heredoc bodies and with every quoted string replaced by a token
     (the strings are returned in order), so text that only looks like a command never matches."""
-    command = HEREDOC_RE.sub(" ", command)
+    strip_data, quoted_re = SHELLS[shell]
+    command = strip_data(command.replace(_MASK, ""))  # a mask character in the input is not a token
     strings = []
 
     def keep(match):
-        strings.append(match.group(0)[1:-1])
+        closed = any(match.groups())
+        strings.append(match.group(0)[1:-1] if closed else match.group(0)[1:])
         return "%s%d%s" % (_MASK, len(strings) - 1, _MASK)
 
-    return QUOTED_RE.sub(keep, command), strings
+    return quoted_re.sub(keep, command), strings
 
 
 def _new_branches(entries):
     for entry in entries:
         for _tid, name, tool_input in tool_uses(entry):
             command = tool_input.get("command")
-            if name in SHELL_TOOLS and isinstance(command, str):
-                masked, strings = _mask_quotes(command)
+            if name in SHELLS and isinstance(command, str):
+                masked, strings = _mask_quotes(command, name)
                 for match in NEW_BRANCH_RE.finditer(masked):
                     slug = match.group(1)
                     if slug is None:  # the branch name was quoted
-                        quoted = strings[int(match.group(2))]
+                        index = int(match.group(2))
+                        quoted = strings[index] if index < len(strings) else ""
                         if not quoted.startswith("feature/"):
                             continue
                         slug = quoted[len("feature/"):]

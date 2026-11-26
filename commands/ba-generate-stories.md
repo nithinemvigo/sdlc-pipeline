@@ -1,5 +1,5 @@
 ---
-description: Generate development stories from the atomic requirements: detailed functional and non-functional stories in stories/detailed_stories.md and ultra-lean stories in the original requirements document (BA Requirements, Phase 3)
+description: "Generate development stories from the atomic requirements: detailed functional and non-functional stories in stories/detailed_stories.md and ultra-lean stories in the original requirements document (BA Requirements, Phase 3)"
 allowed-tools: Read, Write, Glob, Grep, Agent, AskUserQuestion, Bash(python:*), Bash(python3:*), Bash(py:*)
 ---
 
