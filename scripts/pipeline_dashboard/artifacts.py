@@ -10,11 +10,20 @@ REQ_RE = re.compile(r"--requirements\s+" + _VALUE)
 ROOT_RE = re.compile(r"--artifact-root\s+" + _VALUE)
 TASK_RE = re.compile(r"^task-(\d+)-(.+)\.md$")
 # a slug read from transcript text: one plain path segment, never '..' or an option
-SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-OVERVIEW_RE = re.compile(r"(?:^|[\\/\s\"'`(])docs[\\/]plans[\\/]([^\\/\s\"'`]+)[\\/]00-overview\.md\b")
+SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_PATH_PREFIX = r"(?:^|[\\/\s\"'`(])docs[\\/]plans[\\/]([^\\/\s\"'`]+)[\\/]00-overview\.md"
+OVERVIEW_RE = re.compile(_PATH_PREFIX + r"\b")  # prose: the file name may be followed by punctuation
+OVERVIEW_PATH_RE = re.compile(_PATH_PREFIX + r"\Z")  # a Write's file_path ends with the file name
+# a git command that creates a feature branch, after heredoc bodies and quoted strings were masked
+_MASK = "\uE000"
+_GIT_OPTION = (r"(?:-[Cc]\s+\S+|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+|--[a-z][\w-]*(?:=\S+)?|-[pP])\s+")
 NEW_BRANCH_RE = re.compile(
-    r"(?:^|[\n;&|(])\s*git\s+(?:-C\s+\S+\s+)?(?:switch|checkout)\s+(?:-[\w-]+\s+)*?(?:-[cbB]|--create|--force-create)\s+"
-    r"[\"']?feature/([^\s\"';&|)]+)")
+    r"(?:^|[\n;&|(])\s*git\s+(?:" + _GIT_OPTION + r")*(?:switch|checkout)\s+(?:-[\w-]+\s+)*?"
+    r"(?:-[cbB]|--create|--force-create)(?:\s+|=)"
+    r"(?:feature/([^\s\"';&|)" + _MASK + r"]+)|" + _MASK + r"(\d+)" + _MASK + r")")
+HEREDOC_RE = re.compile(r"<<-?[ \t]*(['\"]?)(\w+)\1[^\n]*\n.*?(?:^[ \t]*\2[ \t]*$|\Z)",
+                        re.DOTALL | re.MULTILINE)
+QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", re.DOTALL)
 PLANNER = "planner"
 WRITE_TOOLS = ("Write",)
 SHELL_TOOLS = ("Bash", "PowerShell")
@@ -39,7 +48,7 @@ def _written_overviews(entries):
         for _tid, name, tool_input in tool_uses(entry):
             path = tool_input.get("file_path")
             if name in WRITE_TOOLS and isinstance(path, str):
-                match = OVERVIEW_RE.search(path)
+                match = OVERVIEW_PATH_RE.search(path)
                 if match:
                     yield match.group(1)
 
@@ -56,13 +65,33 @@ def _output_overviews(entries):
                     yield match.group(1)
 
 
+def _mask_quotes(command):
+    """The command without heredoc bodies and with every quoted string replaced by a token
+    (the strings are returned in order), so text that only looks like a command never matches."""
+    command = HEREDOC_RE.sub(" ", command)
+    strings = []
+
+    def keep(match):
+        strings.append(match.group(0)[1:-1])
+        return "%s%d%s" % (_MASK, len(strings) - 1, _MASK)
+
+    return QUOTED_RE.sub(keep, command), strings
+
+
 def _new_branches(entries):
     for entry in entries:
         for _tid, name, tool_input in tool_uses(entry):
             command = tool_input.get("command")
             if name in SHELL_TOOLS and isinstance(command, str):
-                for match in NEW_BRANCH_RE.finditer(command):
-                    yield match.group(1)
+                masked, strings = _mask_quotes(command)
+                for match in NEW_BRANCH_RE.finditer(masked):
+                    slug = match.group(1)
+                    if slug is None:  # the branch name was quoted
+                        quoted = strings[int(match.group(2))]
+                        if not quoted.startswith("feature/"):
+                            continue
+                        slug = quoted[len("feature/"):]
+                    yield slug
 
 
 def derive_slug(window, run_agents):

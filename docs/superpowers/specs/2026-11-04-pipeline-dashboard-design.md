@@ -442,7 +442,7 @@ start. The plan folder and git results are cached for 5 seconds.
 - **Referrer-Policy: no-referrer** on every response.
 - **`--open` uses a redirect file** (0600 on POSIX) instead of putting the key on the
   browser's command line.
-- **Residual risks:** the key appears in this Claude Code session's transcript (the JSON line
+- **Residual risks:** the key appears in the transcript of every Claude Code session that opened the dashboard (the JSON line
   and `Dashboard: <url>`) and in the browser's history (the `#k=` URL), both the user's own
   data; any process running as the same user can read the state file, the transcript or the
   history, and so the key. The key protects against other accounts and web pages, not against
@@ -505,7 +505,8 @@ Standard library `unittest`, like `tests/acceptance`:
 - README: a "Watching a run" section with what `/pipeline-dashboard` does, the stop command, where
   the data comes from, that the dashboard sends nothing anywhere and the link's key is private,
   and the Cursor limitation.
-- Version 3.4.1 → 3.5.0 in the three version fields; 3.5.1 and 3.6.0 follow-ups as in section 4.
+- Version 3.4.1 → 3.5.0 in the three version fields, then 3.5.1 and 3.6.0 as in section 4; the
+  released version is 3.6.0.
 
 ## 15. Risks
 

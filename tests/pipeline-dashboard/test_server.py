@@ -396,7 +396,8 @@ class SpawnTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         proc = mock.Mock(pid=1, returncode=1)
         proc.poll.return_value = 1
-        with mock.patch.object(cli, "free_port", return_value=8790),                 mock.patch.object(cli.subprocess, "Popen", return_value=proc) as popen:
+        with mock.patch.object(cli, "free_port", return_value=8790), \
+                mock.patch.object(cli.subprocess, "Popen", return_value=proc) as popen:
             result = cli.cmd_start(tmp, cfg=os.path.join(tmp, "cfg"))
         self.assertIn("error", result)
         options = popen.call_args[1]

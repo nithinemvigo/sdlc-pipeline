@@ -11,6 +11,9 @@ from pipeline_dashboard.dashboard import Dashboard
 from pipeline_dashboard.timeutil import parse_ts
 
 
+NL, TAB, BS = chr(10), chr(9), chr(92)
+
+
 def _agent(agent_type, transcript):
     return agents_mod.Agent(transcript.agent_id, {"agentType": "sdlc-pipeline:" + agent_type},
                             fb.parsed(transcript), 0.0)
@@ -82,6 +85,29 @@ class DeriveSlugTest(unittest.TestCase):
                         "git switch -c feature/-x", "git status && echo -b feature/x"):
             self.assertIsNone(artifacts.derive_slug(_bash(command), []), command)
 
+    def test_text_that_only_looks_like_a_branch_command(self):
+        heredoc = NL.join(["git commit -F - <<'EOF'", "fix: stuff", "git switch -c feature/from-heredoc", "EOF"])
+        dashed = NL.join(["cat <<-END", TAB + "git checkout -b feature/dash", TAB + "END"])
+        quoted = NL.join(["echo 'a", "git switch -c feature/in-quotes'"])
+        for command in ('echo "next: ; git checkout -b feature/quoted"', quoted, heredoc, dashed):
+            self.assertIsNone(artifacts.derive_slug(_bash(command), []), command)
+        after = NL.join([heredoc, "git switch -c feature/real"])
+        self.assertEqual(artifacts.derive_slug(_bash(after), []), "real")
+
+    def test_branch_command_with_global_git_options(self):
+        for command, slug in (('git -C "C:/a b" switch -c feature/x', "x"),
+                              ("git --no-pager checkout -b feature/y", "y"),
+                              ("git switch --create=feature/z", "z"),
+                              ("git -c user.name=a -C /r --git-dir=/r/.git switch -c feature/w", "w"),
+                              ("git -C C:" + BS + "a" + BS + "b checkout -B feature/win", "win")):
+            self.assertEqual(artifacts.derive_slug(_bash(command), []), slug, command)
+
+    def test_overview_path_must_end_with_the_file_name(self):
+        t = _sub()
+        t.tool_use(1, "Write", {"file_path": "docs/plans/calculate-emi/00-overview.md.bak"}, "tu-w")
+        self.assertIsNone(artifacts.derive_slug([], [_agent("planner", t)]))
+        self.assertIsNone(artifacts.SAFE_SLUG_RE.match("ok" + NL))
+
     def test_unsafe_slugs_are_ignored(self):
         for path in ("docs/plans/../00-overview.md", "docs/plans/-x/00-overview.md",
                      "docs/plans/a b/00-overview.md", "docs/plans/../../x/00-overview.md"):
@@ -150,6 +176,50 @@ class NoBranchDashboardTest(unittest.TestCase):
             self.assertEqual(d["tasks"]["other_commits"], [])
         finally:
             shutil.rmtree(os.path.join(self.repo, "docs", "plans", "orphan"), ignore_errors=True)
+
+    def test_branchless_runs_deriving_the_same_branch_are_linked(self):
+        cfg = os.path.join(self.tmp, "cfg-link")
+        first = fb.no_branch_run(cfg, self.repo, session_id="sess-l1", checkout=False,
+                                 mtime=parse_ts(fb.ts(50)))
+        second = fb.no_branch_run(cfg, self.repo, session_id="sess-l2", checkout=False,
+                                  mtime=parse_ts(fb.ts(55)))
+        now = parse_ts(fb.ts(56))
+        dash = Dashboard(self.repo, cfg=cfg, prices=self.prices, clock=lambda: now)
+        by_id = dict((r["id"], r) for r in dash.runs()["runs"])
+        self.assertEqual(set(by_id), {first, second})
+        self.assertEqual(set(r["branch"] for r in by_id.values()), {"feature/calculate-emi"})
+        a, b = by_id[first], by_id[second]
+        self.assertEqual((a["resumed_from"], a["linked"]), (None, [second]))
+        self.assertEqual((b["resumed_from"], b["linked"]), (first, [first]))
+
+    def test_derived_slug_cache_sees_a_planner_write_that_arrives_later(self):
+        cfg = os.path.join(self.tmp, "cfg-late")
+        run_id = fb.no_branch_run(cfg, self.repo, session_id="sess-late", planner_write=False, checkout=False)
+        now = parse_ts(fb.ts(56))
+        dash = Dashboard(self.repo, cfg=cfg, prices=self.prices, clock=lambda: now)
+        self.assertEqual(dash.runs()["runs"][0]["branch"], "")
+        self.assertEqual(dash.run(run_id)["tasks"]["slug"], None)
+        late = fb.Transcript(session_id="sess-late", cwd=self.repo, branch="HEAD", sidechain=True, agent_id="nb-pl")
+        overview = os.path.join(self.repo, "docs", "plans", "calculate-emi", "00-overview.md")
+        late.tool_use(52, "Write", {"file_path": overview, "content": "x"}, "tu-late-w")
+        path = os.path.join(fb.project_folder(cfg, self.repo), "sess-late", "subagents", "agent-nb-pl.jsonl")
+        with open(path, "a", encoding="utf-8", newline="") as fh:  # the planner's Write arrives later
+            fh.write(late.lines[-1] + NL)
+        d = dash.run(run_id)
+        self.assertEqual((d["branch"], d["tasks"]["slug"]), ("feature/calculate-emi", "calculate-emi"))
+
+    def test_plan_files_are_artifacts_when_the_slug_has_no_git_branch(self):
+        fb.write_file(self.repo, "docs/plans/orphan2/00-overview.md", "# Plan" + NL)
+        fb.write_file(self.repo, "docs/plans/orphan2/task-01-only.md", "# Task 01" + NL)
+        try:
+            dash, run_id = self.board("cfg-orphan2", slug="orphan2", checkout=False)
+            d = dash.run(run_id)
+            self.assertEqual(d["branch"], "")
+            keys = [a["key"] for a in d["artifacts"]]
+            self.assertIn("plan-overview", keys)
+            self.assertIn("task-01", keys)
+        finally:
+            shutil.rmtree(os.path.join(self.repo, "docs", "plans", "orphan2"), ignore_errors=True)
 
     def test_no_evidence_keeps_todays_behaviour(self):
         dash, run_id = self.board("cfg-none", planner_write=False, checkout=False)
