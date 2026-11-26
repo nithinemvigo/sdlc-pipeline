@@ -57,9 +57,9 @@ class CommandTest(unittest.TestCase):
     def test_versions(self):
         for relative in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json"):
             with open(os.path.join(fb.REPO_ROOT, relative), encoding="utf-8") as fh:
-                self.assertEqual(json.load(fh)["version"], "3.6.0", relative)
+                self.assertEqual(json.load(fh)["version"], "3.6.1", relative)
         with open(os.path.join(fb.REPO_ROOT, ".claude-plugin", "marketplace.json"), encoding="utf-8") as fh:
-            self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.6.0")
+            self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.6.1")
 
 
 class FrontmatterYamlTest(unittest.TestCase):
