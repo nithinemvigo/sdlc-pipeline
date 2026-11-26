@@ -1,8 +1,8 @@
-# /pipeline-ui — local, read-only run dashboard — Design
+# /pipeline-dashboard — local, read-only run dashboard — Design
 
 - **Date:** 2026-11-04
 - **Status:** Draft — awaiting review
-- **Branch:** `feature/pipeline-ui`, cut from `feature/pipeline-all` (plugin 3.4.1 → 3.5.0)
+- **Branch:** `feature/pipeline-dashboard`, cut from `feature/pipeline-all` (plugin 3.4.1 → 3.5.0)
 
 ## 1. Goal
 
@@ -11,7 +11,7 @@ machine is doing: which stage it is in, which agents ran and are running, what e
 in tokens and time, which questions were asked and answered, and what each task changed in
 the code.
 
-It is launched by a new command, `/sdlc-pipeline:pipeline-ui`, which opens the dashboard and
+It is launched by a new command, `/sdlc-pipeline:pipeline-dashboard`, which opens the dashboard and
 then runs one of the existing flows. **The existing pipelines are not modified.**
 
 ## 2. Decisions (client, 2026-11-04)
@@ -21,14 +21,15 @@ then runs one of the existing flows. **The existing pipelines are not modified.*
 | D1 | Read-only first. No start, pause, retry or approve from the UI in this version. |
 | D2 | Local only. Each developer sees only their own runs, on their own machine. No shared server, no login, nothing leaves the laptop. |
 | D3 | Scope is the current repository (including its git worktrees). |
-| D4 | A new command, `/pipeline-ui`, opens the dashboard and then asks which flow to run: `pipeline-all`, `pipeline` or `pipeline-parallel`. |
-| D5 | `/pipeline`, `/pipeline-all` and `/pipeline-parallel` are unchanged. The dashboard learns everything from files Claude Code and git already write, so a run adds no orchestrator tokens for tracking, and improvements to the flows reach `/pipeline-ui` automatically. |
+| D4 | A new command, `/pipeline-dashboard`, opens the dashboard and then asks which flow to run: `pipeline-all`, `pipeline` or `pipeline-parallel`. |
+| D5 | `/pipeline`, `/pipeline-all` and `/pipeline-parallel` are unchanged. The dashboard learns everything from files Claude Code and git already write, so a run adds no orchestrator tokens for tracking, and improvements to the flows reach `/pipeline-dashboard` automatically. |
 | D6 | Approach A: a Python standard-library server on `127.0.0.1` plus one self-refreshing HTML page. No Node, no npm, no build step. |
+| D7 | Renamed from /pipeline-ui (confusing) to /pipeline-dashboard; the view-only command is /pipeline-runs (client, 2026-11-26). |
 
 ## 3. Scope
 
 **In:** run list, run view (stage timeline, agents, checkpoints, tasks and diffs, artifact
-links), token usage and estimated cost, live refresh, the `/pipeline-ui` command, tests,
+links), token usage and estimated cost, live refresh, the `/pipeline-dashboard` command, tests,
 README section, version bump.
 
 **Out (this version):** controlling runs (D1), sharing or other machines' runs (D2), runs in
@@ -41,26 +42,26 @@ All new, except the README and the three version fields.
 
 | File | Purpose |
 |---|---|
-| `commands/pipeline-ui.md` | The `/pipeline-ui` command (section 5). |
-| `commands/pipeline-dashboard.md` | The `/pipeline-dashboard` command (section 5.3): opens or stops the dashboard only. |
-| `scripts/pipeline-ui.py` | CLI: `start`, `serve`, `stop`, `status`. Starts the server and holds the HTTP handlers. |
-| `scripts/pipeline_ui/` | Package with one module per reader, so each is testable on its own: `transcripts.py`, `runs.py`, `agents.py`, `stages.py`, `checkpoints.py`, `usage.py`, `gitinfo.py`, `artifacts.py`, `status.py`. |
-| `scripts/pipeline-ui.html` | The page: vanilla HTML/CSS/JS in one file, no external requests. |
-| `scripts/pipeline-ui-prices.json` | Editable per-model price table for the cost estimate. |
-| `tests/pipeline-ui/` | Tests and hand-written fixtures (section 12). |
+| `commands/pipeline-dashboard.md` | The `/pipeline-dashboard` command (section 5). |
+| `commands/pipeline-runs.md` | The `/pipeline-runs` command (section 5.3): opens or stops the dashboard only. |
+| `scripts/pipeline-dashboard.py` | CLI: `start`, `serve`, `stop`, `status`. Starts the server and holds the HTTP handlers. |
+| `scripts/pipeline_dashboard/` | Package with one module per reader, so each is testable on its own: `transcripts.py`, `runs.py`, `agents.py`, `stages.py`, `checkpoints.py`, `usage.py`, `gitinfo.py`, `artifacts.py`, `status.py`. |
+| `scripts/pipeline-dashboard.html` | The page: vanilla HTML/CSS/JS in one file, no external requests. |
+| `scripts/pipeline-dashboard-prices.json` | Editable per-model price table for the cost estimate. |
+| `tests/pipeline-dashboard/` | Tests and hand-written fixtures (section 12). |
 | `README.md` | New "Watching a run" section. |
-| `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.cursor-plugin/plugin.json` | Version 3.4.1 → 3.5.0; 3.5.1 for the hidden-console fix and `/pipeline-dashboard`. |
+| `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.cursor-plugin/plugin.json` | Version 3.4.1 → 3.5.0; 3.5.1 for the hidden-console fix and the view-only command; 3.6.0 for the rename (`/pipeline-ui` → `/pipeline-dashboard`, view-only command → `/pipeline-runs`). |
 
 Everything must run on **Python 3.8+**, matching the README's existing requirement.
 
-## 5. The `/pipeline-ui` command
+## 5. The `/pipeline-dashboard` command
 
 ### 5.1 Steps
 
 Arguments: `[--flow pipeline-all|pipeline|pipeline-parallel] <the request, as for the flow>`.
 
 1. **One Bash call** (a short script in the command file) that resolves three things and
-   starts the dashboard with `<python> "<root>/scripts/pipeline-ui.py" start --project <project> --open`:
+   starts the dashboard with `<python> "<root>/scripts/pipeline-dashboard.py" start --project <project> --open`:
    - **Python** (first, because the root lookup uses it): the first of `python3`, `python` for
      which `-c 'import sys; sys.exit(sys.version_info < (3, 8))'` succeeds, so the Windows Store
      `python3` stub is skipped. None → `{"error": "python 3.8+ not found"}`.
@@ -68,7 +69,7 @@ Arguments: `[--flow pipeline-all|pipeline|pipeline-parallel] <the request, as fo
      1. `${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-}}` (Claude Code's Bash tool sets neither today);
      2. the installed version: `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json`
         (version 2, `{"plugins": {"sdlc-pipeline@<marketplace>": [{"installPath", "version"}, ...]}}`),
-        the `installPath` of an `sdlc-pipeline@*` entry that contains `scripts/pipeline-ui.py`,
+        the `installPath` of an `sdlc-pipeline@*` entry that contains `scripts/pipeline-dashboard.py`,
         the highest `version` if there are several;
      3. only when that file is missing, unreadable or has no usable entry: the newest version
         folder under `.../plugins/cache/*/sdlc-pipeline/*/` that contains the script.
@@ -85,7 +86,7 @@ Arguments: `[--flow pipeline-all|pipeline|pipeline-parallel] <the request, as fo
    `pipeline-all` (features, requirements first — recommended for new features) ·
    `pipeline` (features or bugs) · `pipeline-parallel` (features or bugs, parallel build).
 4. **Hand off:** invoke the Skill `sdlc-pipeline:<flow>` with the remaining arguments,
-   unchanged, then follow that skill exactly. `/pipeline-ui` adds no stages, rules or
+   unchanged, then follow that skill exactly. `/pipeline-dashboard` adds no stages, rules or
    questions of its own after this point.
 
 Total added cost per run: two or three orchestrator tool calls.
@@ -97,12 +98,12 @@ tool; `CLAUDE_PLUGIN_ROOT` is not a usable signal, since Claude Code does not se
 either). In Cursor step 1 prints `{"error": "needs-claude-code"}`, step 2 prints
 `The dashboard needs Claude Code; continuing without it.`, and steps 3–4 run as normal.
 
-### 5.3 `/pipeline-dashboard`
+### 5.3 `/pipeline-runs`
 
 Opens the dashboard for the current project from any Claude Code session, without starting a
 run: it runs the same start block as Step 1 (byte-identical, so the same plugin lookup) and
 prints `Dashboard: <url>`. With the argument `stop` it runs the same stop block as
-`/pipeline-ui`. It never invokes a flow, asks nothing, and changes nothing else.
+`/pipeline-dashboard`. It never invokes a flow, asks nothing, and changes nothing else.
 
 ## 6. Where the data comes from
 
@@ -128,15 +129,16 @@ prints `Dashboard: <url>`. With the argument `stop` it runs the same stop block 
 - **Run start:** a main-session entry with `type: "user"`, `isSidechain: false`, not
   `isMeta`, whose message text *starts with* `<command-message>` or `<command-name>` and
   matches
-  `<command-name>/?(?:sdlc-pipeline:)?(pipeline-all|pipeline-parallel|pipeline-ui|pipeline)</command-name>`.
+  `<command-name>/?(?:sdlc-pipeline:)?(pipeline-all|pipeline-parallel|pipeline-dashboard|pipeline-ui|pipeline)</command-name>`.
+  `pipeline-ui` is the command's name before 3.6.0, still matched so earlier runs show.
   Runs started directly with an existing flow are listed too. The "starts with" rule matters:
   subagent hand-back reports arrive in the main session as user messages, and one that quotes
   a command must not open a new run. (Verified on the 2026-10-29 EMI run: a Skill hand-off
-  such as `/pipeline-ui` → `pipeline-all` is logged as a `tool_result`
+  such as `/pipeline-dashboard` → `pipeline-all` is logged as a `tool_result`
   "Launching skill: …", not as a new `<command-name>` entry, so it does not split the run.)
 - **Run end:** the next run start in the same session, or the end of the file.
 - **Run id:** `<session id>:<line number of the start entry>`.
-- **Flow:** the matched command name. For `pipeline-ui`, the flow is the name in the first
+- **Flow:** the matched command name. For `pipeline-dashboard` (or the legacy `pipeline-ui`), the flow is the name in the first
   `Skill` tool call to `sdlc-pipeline:pipeline*` after the start; until that call exists the
   flow shows as `choosing…`.
 - **Title:** the first line of `<command-args>`, cut to 120 characters (`(no request text)`
@@ -279,7 +281,7 @@ Links are offered only for files that exist from this list (paths relative to th
   and cache read (`cache_read_input_tokens`). The page shows all four, plus their total.
 - Rows: one per agent, plus an **orchestrator** row for the main session's own usage within
   the run window. The run total is their sum.
-- **Estimated cost** = tokens × the model's rates in `pipeline-ui-prices.json` (USD per
+- **Estimated cost** = tokens × the model's rates in `pipeline-dashboard-prices.json` (USD per
   million tokens for input, output, cache write 5m, cache write 1h, cache read). Cache writes
   are split by `cache_creation.ephemeral_5m_input_tokens` and
   `ephemeral_1h_input_tokens` when present, else priced as 5m. The shipped values are copied
@@ -325,7 +327,7 @@ Both *waiting for you* rules show how long it has waited (`waiting for you · 3 
 
 ### 9.2 State and lifecycle
 
-- State file: `<config dir>/sdlc-pipeline/ui/<first 12 hex of sha1(repo root)>.json` with
+- State file: `<config dir>/sdlc-pipeline/dashboard/<first 12 hex of sha1(repo root)>.json` with
   `pid`, `port`, `project`, `token` (the per-launch key, 9.3) and `started_at`; created 0600 on
   POSIX (on Windows the user profile's ACL protects it). The server also writes its log next
   to it (`<same name>.log`, the detached process's stderr), and `start --open` writes the
@@ -353,12 +355,12 @@ How the key travels: `start` prints `http://127.0.0.1:<port>/#k=<key>`. A fragme
 sent to a server and never appears in a Referer. On load the page moves the key to
 `sessionStorage` (per origin, so per port) and clears it from the address bar with
 `history.replaceState`; `#run=` routing then works as before. Every `fetch` sends
-`X-Pipeline-UI-Token: <key>`; the CLI sends the same header. There are no cookies.
+`X-Pipeline-Dashboard-Token: <key>`; the CLI sends the same header. There are no cookies.
 
 - `GET /` serves the page without a key; it holds no data and does not count as activity.
 - Every other request, `/api/health` included, needs the header (compared with
   `hmac.compare_digest`), else `403 {"error": "missing or wrong dashboard key"}`. Without a
-  key, or on a 403, the page shows "Open the dashboard with the link /pipeline-ui printed (it
+  key, or on a 403, the page shows "Open the dashboard with the link /pipeline-dashboard printed (it
   contains a one-time key)." instead of retrying.
 - HTML reports open in a new tab, which cannot send a header. The page asks
   `/api/file-link?run=&key=` (with the header) for
@@ -371,7 +373,7 @@ sent to a server and never appears in a Referer. On load the page moves the key 
 
 | Path | Returns |
 |---|---|
-| `/` | `pipeline-ui.html` (no key needed) |
+| `/` | `pipeline-dashboard.html` (no key needed) |
 | `/api/health` | `project`, plugin version, `pid` |
 | `/api/runs` | `project`, the transcript `folders` searched (for the empty state), and `runs`: id, flow, title, branch, status, started, duration, token total, estimated cost, linked run ids |
 | `/api/runs/<id>` | Run view: the above plus stages, agents, checkpoints, tasks with commits, artifact keys, read warnings (section 10) |
@@ -427,7 +429,7 @@ start. The plan folder and git results are cached for 5 seconds.
   so a web page using DNS rebinding cannot read transcripts through the server.
 - **Per-launch key.** Each server generates `secrets.token_urlsafe(32)` and keeps it in its
   state file. Every data request needs it, compared with `hmac.compare_digest`. It travels in
-  the URL fragment (`/#k=`), then in `sessionStorage`, then in the `X-Pipeline-UI-Token`
+  the URL fragment (`/#k=`), then in `sessionStorage`, then in the `X-Pipeline-Dashboard-Token`
   header; the CLI sends the same header. Other local users and sandboxed processes that can
   reach the loopback port therefore cannot read transcripts. The order is Host check, then the
   key, and only then does the request count as activity, so refused requests do not keep an
@@ -471,11 +473,11 @@ start. The plan folder and git results are cached for 5 seconds.
 ## 13. Testing
 
 Standard library `unittest`, like `tests/acceptance`:
-`python -I -m unittest discover -s tests/pipeline-ui`.
+`python -I -m unittest discover -s tests/pipeline-dashboard`.
 
 - **Fixtures** (hand-written, shaped like the 2026-10-29 EMI run, no real content): a project
   transcript folder with
-  - a session holding two runs (one `/pipeline-ui` that hands off to `pipeline-all`, one
+  - a session holding two runs (one `/pipeline-dashboard` that hands off to `pipeline-all`, one
     plain `/pipeline`);
   - subagents covering every stage in 6.4, an implementer after the acceptance verifier
     (fix round), one running agent, one interrupted agent, one with no `meta.json`, one
@@ -495,15 +497,15 @@ Standard library `unittest`, like `tests/acceptance`:
   unknown key; the server is bound to `127.0.0.1`.
 - **Smoke test:** start `serve` on a free port against the fixtures, call `/api/health`,
   `/api/runs` and `/api/runs/<id>`, check the shapes, stop it.
-- **Manual check** before shipping: run `/pipeline-ui` on a small feature (the EMI demo) in
+- **Manual check** before shipping: run `/pipeline-dashboard` on a small feature (the EMI demo) in
   the Claude Code CLI and the desktop app, and watch the dashboard through a full run.
 
 ## 14. Release
 
-- README: a "Watching a run" section with what `/pipeline-ui` does, the stop command, where
+- README: a "Watching a run" section with what `/pipeline-dashboard` does, the stop command, where
   the data comes from, that the dashboard sends nothing anywhere and the link's key is private,
   and the Cursor limitation.
-- Version 3.4.1 → 3.5.0 in the three version fields.
+- Version 3.4.1 → 3.5.0 in the three version fields; 3.5.1 and 3.6.0 follow-ups as in section 4.
 
 ## 15. Risks
 

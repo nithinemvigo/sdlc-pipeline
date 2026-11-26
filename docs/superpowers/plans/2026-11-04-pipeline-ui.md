@@ -1,3 +1,5 @@
+Renamed after implementation: /pipeline-ui → /pipeline-dashboard (and the view-only command → /pipeline-runs); file and module names changed to match.
+
 # /pipeline-ui — local run dashboard — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

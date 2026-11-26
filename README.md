@@ -153,12 +153,12 @@ The requirements agent asks you only about major gaps (purpose, users, scope, ma
 
 ## Watching a run
 
-`/sdlc-pipeline:pipeline-ui <request>` opens a dashboard in your browser, asks which flow to run
+`/sdlc-pipeline:pipeline-dashboard <request>` opens a dashboard in your browser, asks which flow to run
 (`pipeline-all`, `pipeline` or `pipeline-parallel`), then runs that flow exactly as if you had
 typed it. Add `--flow pipeline-all` to skip the question.
 
 To open the dashboard from any Claude Code session without starting a run, use
-`/sdlc-pipeline:pipeline-dashboard`; `/sdlc-pipeline:pipeline-dashboard stop` stops it. It
+`/sdlc-pipeline:pipeline-runs`; `/sdlc-pipeline:pipeline-runs stop` stops it. It
 shows the runs of the project that session is in.
 
 The dashboard refreshes every few seconds and shows:
@@ -172,7 +172,7 @@ The dashboard refreshes every few seconds and shows:
 It is read-only and local. It reads the transcripts Claude Code already keeps under
 `~/.claude/projects/` (or `$CLAUDE_CONFIG_DIR`), your git history and `docs/plans/`. It listens
 on `127.0.0.1` only and sends nothing anywhere. Runs started with the other pipeline
-commands appear too. Costs are estimates from `scripts/pipeline-ui-prices.json`, which you can
+commands appear too. Costs are estimates from `scripts/pipeline-dashboard-prices.json`, which you can
 edit.
 
 The printed link includes a one-time key (`#k=...`) that lets your browser in. The page keeps
@@ -183,10 +183,10 @@ dashboard starts. Opening the dashboard address without the key shows a note to 
 link.
 
 It stops by itself after two hours with nobody viewing it. To stop it sooner, run
-`/sdlc-pipeline:pipeline-dashboard stop`, or ask Claude to stop the pipeline dashboard. Both
+`/sdlc-pipeline:pipeline-runs stop`, or ask Claude to stop the pipeline dashboard. Both
 find the plugin folder themselves, so they work without `CLAUDE_PLUGIN_ROOT`.
 
-Cursor does not write Claude Code transcripts, so in Cursor `/pipeline-ui` skips the dashboard
+Cursor does not write Claude Code transcripts, so in Cursor `/pipeline-dashboard` skips the dashboard
 and runs the flow as normal. The transcript format is not a published contract: if a Claude
 Code update changes it, the dashboard shows a warning instead of failing.
 
