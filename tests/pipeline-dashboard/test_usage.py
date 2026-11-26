@@ -1,8 +1,8 @@
-"""Tests for pipeline_ui.usage."""
+"""Tests for pipeline_dashboard.usage."""
 import unittest
 
 import fixture_builder as fb
-from pipeline_ui import usage
+from pipeline_dashboard import usage
 
 
 class UsageTest(unittest.TestCase):

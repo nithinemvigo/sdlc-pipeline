@@ -1,9 +1,9 @@
-"""Tests for pipeline_ui.runs and pipeline_ui.checkpoints."""
+"""Tests for pipeline_dashboard.runs and pipeline_dashboard.checkpoints."""
 import unittest
 
 import fixture_builder as fb
-from pipeline_ui import checkpoints
-from pipeline_ui import runs as runs_mod
+from pipeline_dashboard import checkpoints
+from pipeline_dashboard import runs as runs_mod
 
 ASK = {"questions": [{"header": "Plan", "question": "Approve the plan?",
                       "options": [{"label": "Approve"}, {"label": "Change"}]}]}
@@ -12,7 +12,7 @@ ASK = {"questions": [{"header": "Plan", "question": "Approve the plan?",
 class FindRunsTest(unittest.TestCase):
     def test_two_runs_in_one_session(self):
         t = fb.Transcript(session_id="s1")
-        t.command(0, "pipeline-ui", "Add calculate_emi\nwith details")
+        t.command(0, "pipeline-dashboard", "Add calculate_emi\nwith details")
         t.tool_use(1, "Skill", {"skill": "sdlc-pipeline:pipeline-all", "args": "Add calculate_emi"}, "tu-skill")
         t.tool_result(1, "tu-skill", "Launching skill: sdlc-pipeline:pipeline-all")
         t.branch = "feature/calculate-emi"
@@ -22,18 +22,26 @@ class FindRunsTest(unittest.TestCase):
         t.command(10, "pipeline", "")
         first, second = runs_mod.find_runs("s1", fb.parsed(t))
         self.assertEqual((first.command, first.flow, first.title, first.branch, first.superseded),
-                         ("pipeline-ui", "pipeline-all", "Add calculate_emi", "feature/calculate-emi", True))
+                         ("pipeline-dashboard", "pipeline-all", "Add calculate_emi", "feature/calculate-emi", True))
         self.assertEqual((second.flow, second.title, second.branch, second.superseded),
                          ("pipeline", "(no request text)", "master", False))
         self.assertEqual(first.run_id, "s1:0")
         self.assertEqual(first.started_at, fb.ts(0))
         self.assertEqual(len(first.entries), 5)
 
-    def test_pipeline_ui_before_the_flow_is_chosen(self):
+    def test_pipeline_dashboard_before_the_flow_is_chosen(self):
         t = fb.Transcript()
-        t.command(0, "pipeline-ui", "x")
+        t.command(0, "pipeline-dashboard", "x")
         [run] = runs_mod.find_runs("s", fb.parsed(t))
         self.assertEqual(run.flow, runs_mod.CHOOSING)
+
+    def test_legacy_pipeline_ui_run_still_shows_with_its_flow(self):
+        t = fb.Transcript(session_id="s1")
+        t.command(0, "pipeline-ui", "Old name")
+        t.tool_use(1, "Skill", {"skill": "sdlc-pipeline:pipeline-parallel", "args": "Old name"}, "tu-skill")
+        t.tool_result(1, "tu-skill", "Launching skill: sdlc-pipeline:pipeline-parallel")
+        [run] = runs_mod.find_runs("s1", fb.parsed(t))
+        self.assertEqual((run.command, run.flow, run.title), ("pipeline-ui", "pipeline-parallel", "Old name"))
 
     def test_quoted_command_is_not_a_run(self):
         t = fb.Transcript()

@@ -1,4 +1,4 @@
-"""Tests for pipeline_ui.transcripts, entries and timeutil."""
+"""Tests for pipeline_dashboard.transcripts, entries and timeutil."""
 import json
 import os
 import shutil
@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 import fixture_builder as fb
-from pipeline_ui import entries, timeutil, transcripts
+from pipeline_dashboard import entries, timeutil, transcripts
 
 
 class EncodeTest(unittest.TestCase):

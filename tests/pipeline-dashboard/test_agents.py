@@ -1,10 +1,10 @@
-"""Tests for pipeline_ui.agents."""
+"""Tests for pipeline_dashboard.agents."""
 import unittest
 
 import fixture_builder as fb
-from pipeline_ui import agents
-from pipeline_ui import runs as runs_mod
-from pipeline_ui.timeutil import parse_ts
+from pipeline_dashboard import agents
+from pipeline_dashboard import runs as runs_mod
+from pipeline_dashboard.timeutil import parse_ts
 
 NOW = parse_ts(fb.ts(30))
 

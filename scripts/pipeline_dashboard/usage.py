@@ -2,7 +2,7 @@
 import json
 import os
 
-PRICES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline-ui-prices.json")
+PRICES_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline-dashboard-prices.json")
 RATE_KEYS = ("input", "output", "cache_write_5m", "cache_write_1h", "cache_read")
 
 

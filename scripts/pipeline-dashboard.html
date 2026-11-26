@@ -140,10 +140,10 @@ function isLive(status) { return status === "running" || status === "waiting"; }
 function route() { const m = location.hash.match(/^#run=(.+)$/); return m ? decodeURIComponent(m[1]) : null; }
 function openRun(id) { location.hash = "run=" + encodeURIComponent(id); }
 // The one-time key arrives in the fragment (#k=...), which is never sent to a server. It moves to
-// sessionStorage (per origin, so per port) and travels only in the X-Pipeline-UI-Token header.
-const KEY_HEADER = "X-Pipeline-UI-Token";
-const KEY_STORE = "pipeline-ui-key";
-const NO_KEY = "Open the dashboard with the link /pipeline-ui printed (it contains a one-time key).";
+// sessionStorage (per origin, so per port) and travels only in the X-Pipeline-Dashboard-Token header.
+const KEY_HEADER = "X-Pipeline-Dashboard-Token";
+const KEY_STORE = "pipeline-dashboard-key";
+const NO_KEY = "Open the dashboard with the link /pipeline-dashboard printed (it contains a one-time key).";
 let memoryKey = null; // used when sessionStorage is blocked
 function takeKey() {
   const m = location.hash.match(/^#k=([^&]+)$/);
@@ -198,7 +198,7 @@ async function refresh() {
     if (seq !== state.seq) return;
     $("#err").textContent = "";
     if (e.noKey) { show(noKeyView()); return; }
-    $("#err").textContent = "Could not load from the dashboard server (" + e.message + "). If it stopped, run /sdlc-pipeline:pipeline-ui again.";
+    $("#err").textContent = "Could not load from the dashboard server (" + e.message + "). If it stopped, run /sdlc-pipeline:pipeline-dashboard again.";
   }
   state.timer = setTimeout(refresh, live ? 3000 : 30000);
 }
@@ -210,7 +210,7 @@ function renderList(d) {
       h("p", {}, "No pipeline runs found for ", h("code", {}, d.project), "."),
       h("p", { class: "muted" }, "Looked in:"),
       h("ul", {}, (d.folders.length ? d.folders : ["(no transcript folder for this project yet)"]).map((f) => h("li", {}, h("code", {}, f)))),
-      h("p", { class: "muted" }, "Run /sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-ui and it appears here."));
+      h("p", { class: "muted" }, "Run /sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-dashboard and it appears here."));
   }
   const head = [["Started", ""], ["Flow", ""], ["Feature", ""], ["Branch", "hide-sm"], ["Status", ""],
     ["Duration", "num hide-sm"], ["Tokens", "num"], ["Est. cost", "num"]];

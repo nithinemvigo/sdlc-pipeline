@@ -1,4 +1,4 @@
-"""Hand-built Claude Code transcripts for the pipeline-ui tests. No real session content."""
+"""Hand-built Claude Code transcripts for the pipeline-dashboard tests. No real session content."""
 import itertools
 import json
 import os
@@ -10,8 +10,8 @@ SCRIPTS = os.path.join(REPO_ROOT, "scripts")
 if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
-from pipeline_ui import transcripts  # noqa: E402
-from pipeline_ui.timeutil import parse_ts  # noqa: E402
+from pipeline_dashboard import transcripts  # noqa: E402
+from pipeline_dashboard.timeutil import parse_ts  # noqa: E402
 
 _counter = itertools.count(1)
 
@@ -220,7 +220,7 @@ def make_git_repo(path):
 def emi_like(cfg, repo, mtime=None):
     """Two runs in one session, shaped like the 2026-10-29 EMI run.
 
-    Run 1: /pipeline-ui -> pipeline-all, an agent for every stage it reaches, a fix round after the
+    Run 1: /pipeline-dashboard -> pipeline-all, an agent for every stage it reaches, a fix round after the
     acceptance verifier, an unknown agent without meta, a nested agent, a notification-only finish,
     two questions (one answered in chat), a duplicated response, one invalid line. Shipped.
     Run 2: /pipeline on master, one pending question.
@@ -228,7 +228,7 @@ def emi_like(cfg, repo, mtime=None):
     """
     mtime = parse_ts(ts(45)) if mtime is None else mtime
     s = Transcript(session_id="sess-emi", cwd=repo, branch="master")
-    s.command(0, "pipeline-ui", "Add calculate_emi(principal, annual_rate, months)\nRound half up.")
+    s.command(0, "pipeline-dashboard", "Add calculate_emi(principal, annual_rate, months)\nRound half up.")
     run1_line = len(s.lines)
     s.tool_use(1, "Skill", {"skill": "sdlc-pipeline:pipeline-all", "args": "Add calculate_emi"}, "tu-skill")
     s.tool_result(1, "tu-skill", "Launching skill: sdlc-pipeline:pipeline-all")
@@ -298,12 +298,12 @@ def emi_like(cfg, repo, mtime=None):
 
 def no_branch_run(cfg, repo, session_id="sess-nob", planner_write=True, checkout=True, slug="calculate-emi",
                   mtime=None):
-    """One /pipeline-ui run whose entries carry gitBranch "HEAD" (the repo had no commit yet), shaped
+    """One /pipeline-dashboard run whose entries carry gitBranch "HEAD" (the repo had no commit yet), shaped
     like the 2026-11-05 EMI demo: the planner Writes docs/plans/<slug>/00-overview.md and the
     orchestrator later runs `git checkout -q -b feature/<slug>`. Minutes 46-55. Returns the run id."""
     mtime = parse_ts(ts(55)) if mtime is None else mtime
     s = Transcript(session_id=session_id, cwd=repo, branch="HEAD")
-    s.command(46, "pipeline-ui", "Add calculate_emi without a branch")
+    s.command(46, "pipeline-dashboard", "Add calculate_emi without a branch")
     run_line = len(s.lines)
     s.tool_use(46, "Skill", {"skill": "sdlc-pipeline:pipeline-all", "args": "Add calculate_emi"}, "tu-nb-skill")
     s.tool_result(46, "tu-nb-skill", "Launching skill: sdlc-pipeline:pipeline-all")

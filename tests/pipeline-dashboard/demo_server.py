@@ -1,6 +1,6 @@
 """Serve the EMI-shaped fixture so the page can be checked in a browser.
 
-    python -I tests/pipeline-ui/demo_server.py      (Ctrl+C to stop)
+    python -I tests/pipeline-dashboard/demo_server.py      (Ctrl+C to stop)
 """
 import importlib.util
 import os
@@ -10,13 +10,13 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixture_builder as fb  # noqa: E402
 
-spec = importlib.util.spec_from_file_location("pipeline_ui_cli", os.path.join(fb.SCRIPTS, "pipeline-ui.py"))
+spec = importlib.util.spec_from_file_location("pipeline_dashboard_cli", os.path.join(fb.SCRIPTS, "pipeline-dashboard.py"))
 cli = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cli)
 
 
 def main():
-    tmp = tempfile.mkdtemp(prefix="pipeline-ui-demo-")
+    tmp = tempfile.mkdtemp(prefix="pipeline-dashboard-demo-")
     repo = fb.make_git_repo(os.path.join(tmp, "repo"))
     cfg = os.path.join(tmp, "cfg")
     fb.emi_like(cfg, repo)

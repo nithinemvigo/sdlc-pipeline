@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Local, read-only dashboard for sdlc-pipeline runs.
 
-    python pipeline-ui.py start  --project <repo> [--open]   start (or reuse) the server, print its URL
-    python pipeline-ui.py serve  --project <repo> --port <n> run the server in the foreground
-    python pipeline-ui.py stop   --project <repo>            stop this project's server
-    python pipeline-ui.py status --project <repo>            is it running?
+    python pipeline-dashboard.py start  --project <repo> [--open]   start (or reuse) the server, print its URL
+    python pipeline-dashboard.py serve  --project <repo> --port <n> run the server in the foreground
+    python pipeline-dashboard.py stop   --project <repo>            stop this project's server
+    python pipeline-dashboard.py status --project <repo>            is it running?
 
 Prints one JSON line. Standard library only, Python 3.8+. Listens on 127.0.0.1 only, never writes
-to the repository; its only files are a state file and a log under <config dir>/sdlc-pipeline/ui/.
+to the repository; its only files are a state file and a log under <config dir>/sdlc-pipeline/dashboard/.
 """
 import argparse
 import hashlib
@@ -33,17 +33,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from pipeline_ui import transcripts  # noqa: E402
-from pipeline_ui.dashboard import Dashboard  # noqa: E402
+from pipeline_dashboard import transcripts  # noqa: E402
+from pipeline_dashboard.dashboard import Dashboard  # noqa: E402
 
 HOST = "127.0.0.1"
 FIRST_PORT = 8765
 PORT_COUNT = 20
 IDLE_LIMIT_S = 2 * 3600
-PAGE = os.path.join(HERE, "pipeline-ui.html")
+PAGE = os.path.join(HERE, "pipeline-dashboard.html")
 PAGE_CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
             "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'")
-KEY_HEADER = "X-Pipeline-UI-Token"
+KEY_HEADER = "X-Pipeline-Dashboard-Token"
 LINK_TTL_S = 60  # signed /api/file links (HTML reports opened in a new tab)
 LINK_MAX_AHEAD_S = 120
 FILE_TYPES = {"md": "text/plain; charset=utf-8", "json": "application/json; charset=utf-8",
@@ -60,7 +60,7 @@ def plugin_version():
 
 
 def _ui_dir(cfg=None):
-    return os.path.join(cfg or transcripts.config_dir(), "sdlc-pipeline", "ui")
+    return os.path.join(cfg or transcripts.config_dir(), "sdlc-pipeline", "dashboard")
 
 
 def _digest(project):
@@ -191,7 +191,7 @@ def sign_file(token, run, key, exp):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "sdlc-pipeline-ui"
+    server_version = "sdlc-pipeline-dashboard"
 
     def log_message(self, fmt, *args):  # keep the console quiet
         pass
@@ -246,7 +246,7 @@ class Handler(BaseHTTPRequestHandler):
         return hmac.compare_digest(sig.encode("utf-8"), expected.encode("utf-8"))
 
     def _admit(self):
-        """Host check, then the key (X-Pipeline-UI-Token, or a signed /api/file link). Only an
+        """Host check, then the key (X-Pipeline-Dashboard-Token, or a signed /api/file link). Only an
         admitted request counts as activity. `GET /` is the page, which holds no data, so it needs
         no key and is not activity. Returns the split URL, or None when the request was answered."""
         if not self._host_ok():

@@ -1,4 +1,4 @@
-"""Tests for scripts/pipeline-ui.py: HTTP API, security rules, idle shutdown and the CLI."""
+"""Tests for scripts/pipeline-dashboard.py: HTTP API, security rules, idle shutdown and the CLI."""
 import importlib.util
 import hashlib
 import hmac
@@ -20,10 +20,10 @@ import urllib.request
 from unittest import mock
 
 import fixture_builder as fb
-from pipeline_ui import gitinfo
+from pipeline_dashboard import gitinfo
 
-SCRIPT = os.path.join(fb.SCRIPTS, "pipeline-ui.py")
-_spec = importlib.util.spec_from_file_location("pipeline_ui_cli", SCRIPT)
+SCRIPT = os.path.join(fb.SCRIPTS, "pipeline-dashboard.py")
+_spec = importlib.util.spec_from_file_location("pipeline_dashboard_cli", SCRIPT)
 cli = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cli)
 TOKEN = "-".join(["test", "dashboard", "key"] * 3)  # a fixed key so the tests can build cookies
@@ -38,12 +38,12 @@ OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirec
 
 
 def fetch(port, path, host=None, token=TOKEN, cookie=None, method="GET"):
-    """(status, headers, body); token goes in the X-Pipeline-UI-Token header, None sends no key."""
+    """(status, headers, body); token goes in the X-Pipeline-Dashboard-Token header, None sends no key."""
     request = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), method=method)
     if host:
         request.add_header("Host", host)
     if token:
-        request.add_header("X-Pipeline-UI-Token", token)
+        request.add_header("X-Pipeline-Dashboard-Token", token)
     if cookie:
         request.add_header("Cookie", cookie)
     try:
@@ -143,7 +143,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.get("/api/runs", host="evil.example:%d" % self.port)[0], 403)
         self.assertEqual(self.get("/api/runs", host="localhost:%d" % self.port)[0], 200)
 
-    # ---- per-launch key: only in the X-Pipeline-UI-Token header ----
+    # ---- per-launch key: only in the X-Pipeline-Dashboard-Token header ----
     def test_page_needs_no_key(self):
         code, headers, body = self.anon("/")
         self.assertEqual(code, 200)

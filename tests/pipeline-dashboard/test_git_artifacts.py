@@ -1,4 +1,4 @@
-"""Tests for pipeline_ui.gitinfo and pipeline_ui.artifacts."""
+"""Tests for pipeline_dashboard.gitinfo and pipeline_dashboard.artifacts."""
 import os
 import shutil
 import tempfile
@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 import fixture_builder as fb
-from pipeline_ui import artifacts, dashboard, gitinfo, transcripts
+from pipeline_dashboard import artifacts, dashboard, gitinfo, transcripts
 
 BRANCH = "feature/calculate-emi"
 
@@ -127,7 +127,7 @@ class ArtifactsTest(unittest.TestCase):
 
     def test_ba_folders_outside_the_repo_are_ignored(self):
         top = "C:/" if os.name == "nt" else "/"
-        with mock.patch("pipeline_ui.artifacts.glob.glob") as fake_glob:
+        with mock.patch("pipeline_dashboard.artifacts.glob.glob") as fake_glob:
             self.assertEqual(artifacts.ba_paths(self.repo, self.window("--artifact-root " + top)), (None, None))
             self.assertEqual(artifacts.artifact_list(self.repo, None, self.window("--artifact-root " + top)), [])
             outside = self.window("--requirements ../outside.md")

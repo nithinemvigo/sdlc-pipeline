@@ -1,11 +1,11 @@
-"""Static checks for scripts/pipeline-ui.html."""
+"""Static checks for scripts/pipeline-dashboard.html."""
 import os
 import re
 import unittest
 
 import fixture_builder as fb
 
-PAGE = os.path.join(fb.SCRIPTS, "pipeline-ui.html")
+PAGE = os.path.join(fb.SCRIPTS, "pipeline-dashboard.html")
 
 
 class PageTest(unittest.TestCase):
@@ -74,14 +74,14 @@ class PageTest(unittest.TestCase):
         self.assertIn('sessionStorage.setItem(KEY_STORE, ', self.html)
         self.assertIn('sessionStorage.getItem(KEY_STORE)', self.html)
         self.assertIn('history.replaceState(null, "", location.pathname + location.search);', self.html)
-        self.assertIn('const KEY_HEADER = "X-Pipeline-UI-Token";', self.html)
+        self.assertIn('const KEY_HEADER = "X-Pipeline-Dashboard-Token";', self.html)
         self.assertIn("headers: { [KEY_HEADER]: key }", self.html)
         self.assertEqual(self.html.count("fetch("), 1, "every request goes through api()")
         self.assertNotIn("document.cookie", self.html)
         self.assertNotIn("?t=", self.html)
 
     def test_no_key_message_instead_of_the_error_loop(self):
-        self.assertIn('"Open the dashboard with the link /pipeline-ui printed (it contains a one-time key)."',
+        self.assertIn('"Open the dashboard with the link /pipeline-dashboard printed (it contains a one-time key)."',
                       self.html)
         self.assertIn("if (e.noKey) { show(noKeyView()); return; }", self.html)
 
@@ -92,7 +92,7 @@ class PageTest(unittest.TestCase):
 
     def test_small_fixes(self):
         self.assertIn("overflow-wrap: anywhere", self.html)
-        self.assertIn("/sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-ui", self.html)
+        self.assertIn("/sdlc-pipeline:pipeline-all, /sdlc-pipeline:pipeline or /sdlc-pipeline:pipeline-dashboard", self.html)
         self.assertIn('e.key === " "', self.html)
 
 

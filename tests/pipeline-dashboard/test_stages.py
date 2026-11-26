@@ -1,11 +1,11 @@
-"""Tests for pipeline_ui.stages and pipeline_ui.status."""
+"""Tests for pipeline_dashboard.stages and pipeline_dashboard.status."""
 import os
 import unittest
 
 import fixture_builder as fb
-from pipeline_ui import agents, stages, status
-from pipeline_ui import runs as runs_mod
-from pipeline_ui.timeutil import parse_ts
+from pipeline_dashboard import agents, stages, status
+from pipeline_dashboard import runs as runs_mod
+from pipeline_dashboard.timeutil import parse_ts
 
 NOW = parse_ts(fb.ts(30))
 AGENTS_DIR = os.path.join(fb.REPO_ROOT, "agents")

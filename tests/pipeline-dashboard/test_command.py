@@ -1,4 +1,4 @@
-"""Checks for commands/pipeline-ui.md and the version bump."""
+"""Checks for commands/pipeline-dashboard.md and the version bump."""
 import json
 import os
 import re
@@ -10,8 +10,8 @@ import unittest
 
 import fixture_builder as fb
 
-COMMAND = os.path.join(fb.REPO_ROOT, "commands", "pipeline-ui.md")
-DASHBOARD_COMMAND = os.path.join(fb.REPO_ROOT, "commands", "pipeline-dashboard.md")
+COMMAND = os.path.join(fb.REPO_ROOT, "commands", "pipeline-dashboard.md")
+RUNS_COMMAND = os.path.join(fb.REPO_ROOT, "commands", "pipeline-runs.md")
 FAKE_SCRIPT = "import json, os, sys\nprint(json.dumps({'script': os.path.abspath(__file__), 'argv': sys.argv[1:]}))\n"
 
 
@@ -48,7 +48,7 @@ class CommandTest(unittest.TestCase):
         self.assertIn("\nargument-hint: ", self.text.split("\n---\n", 1)[0])
 
     def test_starts_the_dashboard_then_hands_off(self):
-        self.assertIn('scripts/pipeline-ui.py" start --project', self.text)
+        self.assertIn('scripts/pipeline-dashboard.py" start --project', self.text)
         for flow in ("pipeline-all", "pipeline", "pipeline-parallel"):
             self.assertIn("`%s`" % flow, self.text)
         self.assertIn("sdlc-pipeline:<flow>", self.text)
@@ -61,22 +61,22 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.5.1")
 
 
-class DashboardCommandTest(unittest.TestCase):
-    """/pipeline-dashboard opens or stops the dashboard from any session, without a pipeline run."""
+class RunsCommandTest(unittest.TestCase):
+    """/pipeline-runs opens or stops the dashboard from any session, without a pipeline run."""
 
     def setUp(self):
-        with open(DASHBOARD_COMMAND, encoding="utf-8") as fh:
+        with open(RUNS_COMMAND, encoding="utf-8") as fh:
             self.text = fh.read()
         with open(COMMAND, encoding="utf-8") as fh:
-            self.ui_blocks = bash_blocks(fh.read())
+            self.dashboard_blocks = bash_blocks(fh.read())
 
     def test_frontmatter(self):
         self.assertTrue(self.text.startswith("---\ndescription: "))
         self.assertIn("\nargument-hint: ", self.text.split("\n---\n", 1)[0])
 
-    def test_same_start_and_stop_blocks_as_pipeline_ui(self):
+    def test_same_start_and_stop_blocks_as_pipeline_dashboard(self):
         # byte-identical, so CommandScriptTest's plugin lookup checks cover this command too
-        self.assertEqual(bash_blocks(self.text), self.ui_blocks)
+        self.assertEqual(bash_blocks(self.text), self.dashboard_blocks)
 
     def test_never_starts_a_pipeline(self):
         self.assertNotIn("Skill", self.text)
@@ -103,7 +103,7 @@ class CommandScriptTest(unittest.TestCase):
     def fake_root(self, *parts):
         root = os.path.join(self.tmp, *parts)
         os.makedirs(os.path.join(root, "scripts"))
-        with open(os.path.join(root, "scripts", "pipeline-ui.py"), "w", encoding="utf-8", newline="\n") as fh:
+        with open(os.path.join(root, "scripts", "pipeline-dashboard.py"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(FAKE_SCRIPT)
         return root
 
@@ -129,7 +129,7 @@ class CommandScriptTest(unittest.TestCase):
 
     def assert_called(self, result, root, command):
         self.assertIn("argv", result, result)
-        self.assertTrue(self.same_path(result["script"], os.path.join(root, "scripts", "pipeline-ui.py")), result)
+        self.assertTrue(self.same_path(result["script"], os.path.join(root, "scripts", "pipeline-dashboard.py")), result)
         argv = result["argv"]
         self.assertEqual(argv[:2], [command, "--project"])
         self.assertTrue(self.same_path(argv[2], self.project), argv)

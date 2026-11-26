@@ -4,9 +4,12 @@ import re
 from .entries import message_text, tool_uses
 
 CMD_RE = re.compile(
-    r"<command-name>/?(?:sdlc-pipeline:)?(pipeline-all|pipeline-parallel|pipeline-ui|pipeline)</command-name>")
+    r"<command-name>/?(?:sdlc-pipeline:)?(pipeline-all|pipeline-parallel|pipeline-dashboard|pipeline-ui|pipeline)</command-name>")
 ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 FLOWS = ("pipeline-all", "pipeline", "pipeline-parallel")
+# Commands that open the dashboard and then hand off to a flow. "pipeline-ui" is the name before the
+# rename; keep it so runs started under it still show.
+DASHBOARD_COMMANDS = ("pipeline-dashboard", "pipeline-ui")
 BASE_BRANCHES = ("main", "master")
 CHOOSING = "choosing…"
 TITLE_LIMIT = 120
@@ -36,8 +39,8 @@ def run_title(text):
 
 
 def run_flow(command, window):
-    """The flow that runs: the command itself, or for pipeline-ui the flow it handed off to."""
-    if command != "pipeline-ui":
+    """The flow that runs: the command itself, or for pipeline-dashboard the flow it handed off to."""
+    if command not in DASHBOARD_COMMANDS:
         return command
     for entry in window:
         for _tool_use_id, name, tool_input in tool_uses(entry):

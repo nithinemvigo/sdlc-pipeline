@@ -5,10 +5,10 @@ import tempfile
 import unittest
 
 import fixture_builder as fb
-from pipeline_ui import agents as agents_mod
-from pipeline_ui import artifacts, gitinfo, usage
-from pipeline_ui.dashboard import Dashboard
-from pipeline_ui.timeutil import parse_ts
+from pipeline_dashboard import agents as agents_mod
+from pipeline_dashboard import artifacts, gitinfo, usage
+from pipeline_dashboard.dashboard import Dashboard
+from pipeline_dashboard.timeutil import parse_ts
 
 
 def _agent(agent_type, transcript):

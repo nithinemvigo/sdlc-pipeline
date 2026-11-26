@@ -1,4 +1,4 @@
-"""Tests for pipeline_ui.dashboard against the EMI-shaped fixture."""
+"""Tests for pipeline_dashboard.dashboard against the EMI-shaped fixture."""
 import os
 import shutil
 import tempfile
@@ -6,11 +6,11 @@ import unittest
 from unittest import mock
 
 import fixture_builder as fb
-from pipeline_ui import agents as agents_mod
-from pipeline_ui import gitinfo, usage
-from pipeline_ui import runs as runs_mod
-from pipeline_ui.dashboard import Dashboard
-from pipeline_ui.timeutil import parse_ts
+from pipeline_dashboard import agents as agents_mod
+from pipeline_dashboard import gitinfo, usage
+from pipeline_dashboard import runs as runs_mod
+from pipeline_dashboard.dashboard import Dashboard
+from pipeline_dashboard.timeutil import parse_ts
 
 
 class DashboardTest(unittest.TestCase):
@@ -33,7 +33,7 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(data["folders"], [fb.project_folder(self.cfg, self.repo)])
         run2, run1 = data["runs"]
         self.assertEqual((run1["id"], run1["command"], run1["flow"], run1["title"], run1["branch"], run1["status"]),
-                         (self.ids["run1"], "pipeline-ui", "pipeline-all",
+                         (self.ids["run1"], "pipeline-dashboard", "pipeline-all",
                           "Add calculate_emi(principal, annual_rate, months)", "feature/calculate-emi", "finished"))
         self.assertEqual((run2["id"], run2["flow"], run2["status"], run2["waiting_since"]),
                          (self.ids["run2"], "pipeline", "waiting", parse_ts(fb.ts(41))))
@@ -98,7 +98,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIsNone(self.dash.run("no-such-run"))
 
     def test_a_failing_section_does_not_break_the_page(self):
-        with mock.patch("pipeline_ui.artifacts.artifact_list", side_effect=RuntimeError("boom")):
+        with mock.patch("pipeline_dashboard.artifacts.artifact_list", side_effect=RuntimeError("boom")):
             d = self.dash.run(self.ids["run1"])
         self.assertIsNone(d["artifacts"])
         self.assertEqual(d["errors"], {"artifacts": "RuntimeError: boom"})
@@ -141,7 +141,7 @@ class DashboardRobustnessTest(unittest.TestCase):
             if session_id == "sess-bad":
                 raise ValueError("corrupt")
             return real(session_id, entries)
-        return mock.patch("pipeline_ui.runs.find_runs", side_effect=find_runs)
+        return mock.patch("pipeline_dashboard.runs.find_runs", side_effect=find_runs)
 
     def test_one_unreadable_subagent_is_skipped_and_reported(self):
         real = agents_mod.Agent
@@ -150,7 +150,7 @@ class DashboardRobustnessTest(unittest.TestCase):
             if agent_id == "a-pl":
                 raise RuntimeError("bad agent")
             return real(agent_id, *args, **kwargs)
-        with mock.patch("pipeline_ui.agents.Agent", side_effect=agent):
+        with mock.patch("pipeline_dashboard.agents.Agent", side_effect=agent):
             dash = self.dash()
             by_id = dict((r["id"], r) for r in dash.runs()["runs"])
             detail = dash.run(self.ids["run1"])
@@ -186,7 +186,7 @@ class DashboardRobustnessTest(unittest.TestCase):
             self.assertTrue(dash.run(self.ids["run1"])["stages"])
 
     def test_failing_agent_assignment_builds_runs_without_agents(self):
-        with mock.patch("pipeline_ui.agents.assign_agents", side_effect=RuntimeError("nope")):
+        with mock.patch("pipeline_dashboard.agents.assign_agents", side_effect=RuntimeError("nope")):
             dash = self.dash()
             summary = [r for r in dash.runs()["runs"] if r["id"] == self.ids["run1"]][0]
             detail = dash.run(self.ids["run1"])
@@ -242,7 +242,7 @@ class DashboardScenarioTest(unittest.TestCase):
         def commit_count():
             tasks = dash.run(run_id)["tasks"]
             return sum(len(t["commits"]) for t in tasks["tasks"]) + len(tasks["other_commits"])
-        with mock.patch("pipeline_ui.dashboard.time.monotonic") as clock:
+        with mock.patch("pipeline_dashboard.dashboard.time.monotonic") as clock:
             clock.return_value = 1000.0
             self.assertEqual(commit_count(), 5)
             fb.write_file(repo, "extra.py", "e = 1\n")
