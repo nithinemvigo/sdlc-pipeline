@@ -10,14 +10,34 @@ REQ_RE = re.compile(r"--requirements\s+" + _VALUE)
 ROOT_RE = re.compile(r"--artifact-root\s+" + _VALUE)
 TASK_RE = re.compile(r"^task-(\d+)-(.+)\.md$")
 # a slug read from transcript text: one plain path segment, never '..' or an option
-SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-OVERVIEW_RE = re.compile(r"(?:^|[\\/\s\"'`(])docs[\\/]plans[\\/]([^\\/\s\"'`]+)[\\/]00-overview\.md\b")
+SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_PATH_PREFIX = r"(?:^|[\\/\s\"'`(])docs[\\/]plans[\\/]([^\\/\s\"'`]+)[\\/]00-overview\.md"
+OVERVIEW_RE = re.compile(_PATH_PREFIX + r"\b")  # prose: the file name may be followed by punctuation
+OVERVIEW_PATH_RE = re.compile(_PATH_PREFIX + r"\Z")  # a Write's file_path ends with the file name
+# a git command that creates a feature branch, after heredoc bodies and quoted strings were masked
+_MASK = "\uE000"
+# Spaces within one command: blanks, or a line continuation (Bash `\`+newline, PowerShell backtick+newline).
+# A bare newline ends the command, so nothing here may cross one; that also keeps the scan linear.
+_SP = r"(?:[ \t]|\\\r?\n|`\r?\n)"
+_WORD = r"[^\s;&|]+"
+_GIT_OPTION = (r"(?:-[Cc]" + _SP + r"+" + _WORD + r"|--(?:git-dir|work-tree|namespace)(?:=|" + _SP + r"+)"
+               + _WORD + r"|--[a-z][\w-]*(?:=" + _WORD + r")?|-[pP])" + _SP + r"+")
+_COMMAND_START = r"(?:^|[\n;&|({])[ \t]*(?:(?:then|do)" + _SP + r"+)?"
+_OPTIONS = r"(?:-[\w-]+" + _SP + r"+)*?"
+_CREATE = (r"(?:switch" + _SP + r"+" + _OPTIONS + r"(?:-[cC]" + _SP + r"+|--(?:force-)?create(?:" + _SP + r"+|=))"
+           r"|checkout" + _SP + r"+" + _OPTIONS + r"-[bB]" + _SP + r"+)")
 NEW_BRANCH_RE = re.compile(
-    r"(?:^|[\n;&|(])\s*git\s+(?:-C\s+\S+\s+)?(?:switch|checkout)\s+(?:-[\w-]+\s+)*?(?:-[cbB]|--create|--force-create)\s+"
-    r"[\"']?feature/([^\s\"';&|)]+)")
+    _COMMAND_START + r"git" + _SP + r"+(?:" + _GIT_OPTION + r")*" + _CREATE
+    + r"(?:feature/([^\s\"';&|)" + _MASK + r"]+)|" + _MASK + r"(\d+)" + _MASK + r")")
+# Bash: `<<DELIM`, `<<-DELIM`, `<<'DELIM'`, `<<"DELIM"` or `<<\DELIM`; not `<<<` and not `1<<2`
+BASH_HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*(?:\\|(['\"]?))(?!\d)([\w.-]+)(?(2)\2)")
+POWERSHELL_HERE_STRING_RE = re.compile(r"@(['\"])[ \t]*\r?\n.*?(?:^\1@|\Z)", re.DOTALL | re.MULTILINE)
+# A quote left open runs to the end of the command. The only groups are the closing quotes.
+BASH_QUOTED_RE = re.compile(r"'[^']*(?:(')|\Z)|\"(?:[^\"\\]|\\.?)*(?:(\")|\Z)", re.DOTALL)
+POWERSHELL_QUOTED_RE = re.compile(r"'(?:[^']|'')*(?:(')|\Z)|\"(?:[^\"`]|`.?|\"\")*(?:(\")|\Z)",
+                                  re.DOTALL)
 PLANNER = "planner"
 WRITE_TOOLS = ("Write",)
-SHELL_TOOLS = ("Bash", "PowerShell")
 
 
 def slug_of(branch):
@@ -39,7 +59,7 @@ def _written_overviews(entries):
         for _tid, name, tool_input in tool_uses(entry):
             path = tool_input.get("file_path")
             if name in WRITE_TOOLS and isinstance(path, str):
-                match = OVERVIEW_RE.search(path)
+                match = OVERVIEW_PATH_RE.search(path)
                 if match:
                     yield match.group(1)
 
@@ -56,13 +76,67 @@ def _output_overviews(entries):
                     yield match.group(1)
 
 
+def _strip_bash_heredocs(command):
+    """The command without heredoc bodies: each body, from the line after `<<DELIM` through the
+    line that is exactly DELIM (tab-indented for `<<-`), or to the end when that line never comes."""
+    parts, pos = [], 0
+    while True:
+        match = BASH_HEREDOC_RE.search(command, pos)
+        newline = command.find("\n", match.end()) if match else -1
+        if newline < 0:  # no more heredocs, or one without a body
+            break
+        body = newline + 1
+        indent = r"\t*" if match.group(1) else ""
+        end = re.compile(r"^" + indent + re.escape(match.group(3)) + r"\r?$", re.MULTILINE).search(command, body)
+        parts.append(command[pos:match.start()] + " " + command[match.end():body])
+        pos = end.end() if end else len(command)
+    parts.append(command[pos:])
+    return "".join(parts)
+
+
+def _strip_powershell_here_strings(command):
+    """The command without here-strings: `@'` or `@"` ending a line, through a line starting `'@` or `"@`."""
+    return POWERSHELL_HERE_STRING_RE.sub(" ", command)
+
+
+# per shell tool: how to drop multi-line data, and what a quoted string is
+SHELLS = {"Bash": (_strip_bash_heredocs, BASH_QUOTED_RE),
+          "PowerShell": (_strip_powershell_here_strings, POWERSHELL_QUOTED_RE)}
+
+
+def _mask_quotes(command, shell):
+    """The command without heredoc bodies and with every quoted string replaced by a token; the
+    strings come back in order as (text, closed). Text that only looks like a command then does not
+    match. Best effort: heredocs and quotes are handled in separate passes, and comments are not
+    parsed, so a contrived command can still expose quoted text. Any slug found must still pass
+    SAFE_SLUG_RE, so the worst case is the wrong plan on a run that names no branch."""
+    strip_data, quoted_re = SHELLS[shell]
+    command = strip_data(command.replace(_MASK, ""))  # a mask character in the input is not a token
+    strings = []
+
+    def keep(match):
+        closed = any(match.groups())
+        strings.append((match.group(0)[1:-1] if closed else match.group(0)[1:], closed))
+        return "%s%d%s" % (_MASK, len(strings) - 1, _MASK)
+
+    return quoted_re.sub(keep, command), strings
+
+
 def _new_branches(entries):
     for entry in entries:
         for _tid, name, tool_input in tool_uses(entry):
             command = tool_input.get("command")
-            if name in SHELL_TOOLS and isinstance(command, str):
-                for match in NEW_BRANCH_RE.finditer(command):
-                    yield match.group(1)
+            if name in SHELLS and isinstance(command, str):
+                masked, strings = _mask_quotes(command, name)
+                for match in NEW_BRANCH_RE.finditer(masked):
+                    slug = match.group(1)
+                    if slug is None:  # the branch name was quoted
+                        index = int(match.group(2))
+                        quoted, closed = strings[index] if index < len(strings) else ("", False)
+                        if not closed or not quoted.startswith("feature/"):  # unclosed: a syntax error
+                            continue
+                        slug = quoted[len("feature/"):]
+                    yield slug
 
 
 def derive_slug(window, run_agents):

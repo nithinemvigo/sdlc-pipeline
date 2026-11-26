@@ -1,4 +1,5 @@
 """Checks for commands/pipeline-dashboard.md and the version bump."""
+import glob
 import json
 import os
 import re
@@ -56,9 +57,41 @@ class CommandTest(unittest.TestCase):
     def test_versions(self):
         for relative in (".claude-plugin/plugin.json", ".cursor-plugin/plugin.json"):
             with open(os.path.join(fb.REPO_ROOT, relative), encoding="utf-8") as fh:
-                self.assertEqual(json.load(fh)["version"], "3.6.0", relative)
+                self.assertEqual(json.load(fh)["version"], "3.6.1", relative)
         with open(os.path.join(fb.REPO_ROOT, ".claude-plugin", "marketplace.json"), encoding="utf-8") as fh:
-            self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.6.0")
+            self.assertEqual(json.load(fh)["plugins"][0]["version"], "3.6.1")
+
+
+class FrontmatterYamlTest(unittest.TestCase):
+    """An unquoted frontmatter value starting with a YAML indicator ([ ] { } & * ! | > % @ ` # ,)
+    or containing ': ' or ' #' breaks or changes the parse; Claude Code then loads the command,
+    agent or skill with empty or cut-short metadata."""
+
+    INDICATOR = re.compile(r"^([\w-]+):[ \t]+([\[\]{}&*!|>%@`#,])")
+    VALUE = re.compile(r"^([\w-]+):[ \t]+(\S.*)$")
+    PATTERNS = (("commands", "*.md"), ("agents", "*.md"), ("skills", "*", "SKILL.md"))
+
+    def headers(self):
+        paths = []
+        for parts in self.PATTERNS:
+            paths += sorted(glob.glob(os.path.join(fb.REPO_ROOT, *parts)))
+        for path in paths:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            if text.startswith("---\n"):
+                yield os.path.relpath(path, fb.REPO_ROOT), text[4:].split("\n---\n", 1)[0]
+
+    def test_no_unquoted_value_that_yaml_reads_differently(self):
+        checked = 0
+        for name, header in self.headers():
+            checked += 1
+            for line in header.splitlines():
+                self.assertIsNone(self.INDICATOR.match(line), "%s: %s" % (name, line))
+                match = self.VALUE.match(line)
+                if match and match.group(2)[0] not in "\"'":
+                    value = match.group(2)
+                    self.assertFalse(": " in value or " #" in value, "%s: %s" % (name, line))
+        self.assertGreater(checked, 0)
 
 
 class RunsCommandTest(unittest.TestCase):

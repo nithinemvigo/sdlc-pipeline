@@ -297,35 +297,37 @@ def emi_like(cfg, repo, mtime=None):
 
 
 def no_branch_run(cfg, repo, session_id="sess-nob", planner_write=True, checkout=True, slug="calculate-emi",
-                  mtime=None):
+                  start=46):
     """One /pipeline-dashboard run whose entries carry gitBranch "HEAD" (the repo had no commit yet), shaped
     like the 2026-11-05 EMI demo: the planner Writes docs/plans/<slug>/00-overview.md and the
-    orchestrator later runs `git checkout -q -b feature/<slug>`. Minutes 46-55. Returns the run id."""
-    mtime = parse_ts(ts(55)) if mtime is None else mtime
+    orchestrator later runs `git checkout -q -b feature/<slug>`. Minutes start to start+9 (46-55 by
+    default); every file's mtime is the last of them. Returns the run id."""
+    mtime = parse_ts(ts(start + 9))
     s = Transcript(session_id=session_id, cwd=repo, branch="HEAD")
-    s.command(46, "pipeline-dashboard", "Add calculate_emi without a branch")
+    s.command(start, "pipeline-dashboard", "Add calculate_emi without a branch")
     run_line = len(s.lines)
-    s.tool_use(46, "Skill", {"skill": "sdlc-pipeline:pipeline-all", "args": "Add calculate_emi"}, "tu-nb-skill")
-    s.tool_result(46, "tu-nb-skill", "Launching skill: sdlc-pipeline:pipeline-all")
-    s.tool_use(47, "Bash", {"command": "git init -q -b master && git commit -q --allow-empty -m base"}, "tu-nb-init")
-    s.tool_result(47, "tu-nb-init", "")
-    s.tool_use(48, "Agent", {"subagent_type": "sdlc-pipeline:planner", "description": "Plan EMI feature"},
+    s.tool_use(start, "Skill", {"skill": "sdlc-pipeline:pipeline-all", "args": "Add calculate_emi"}, "tu-nb-skill")
+    s.tool_result(start, "tu-nb-skill", "Launching skill: sdlc-pipeline:pipeline-all")
+    s.tool_use(start + 1, "Bash", {"command": "git init -q -b master && git commit -q --allow-empty -m base"},
+               "tu-nb-init")
+    s.tool_result(start + 1, "tu-nb-init", "")
+    s.tool_use(start + 2, "Agent", {"subagent_type": "sdlc-pipeline:planner", "description": "Plan EMI feature"},
                "tu-nb-pl")
-    s.tool_result(48, "tu-nb-pl", "Async agent launched successfully.\nagentId: nb-pl")
+    s.tool_result(start + 2, "tu-nb-pl", "Async agent launched successfully.\nagentId: nb-pl")
     if checkout:
-        s.tool_use(50, "Bash", {"command": "cd %s\ngit add -A && git checkout -q -b feature/%s" % (repo, slug)},
-                   "tu-nb-co")
-        s.tool_result(50, "tu-nb-co", "")
-    s.text(54, "Shipped.")
+        s.tool_use(start + 4, "Bash",
+                   {"command": "cd %s\ngit add -A && git checkout -q -b feature/%s" % (repo, slug)}, "tu-nb-co")
+        s.tool_result(start + 4, "tu-nb-co", "")
+    s.text(start + 8, "Shipped.")
     write_session(cfg, repo, s, mtime=mtime)
 
     t = Transcript(session_id=session_id, cwd=repo, branch="HEAD", sidechain=True, agent_id="nb-pl")
-    t.user(48, "Plan the feature.")
+    t.user(start + 2, "Plan the feature.")
     if planner_write:
         overview = os.path.join(repo, "docs", "plans", slug, "00-overview.md")
-        t.tool_use(49, "Write", {"file_path": overview, "content": "# Plan\n"}, "tu-nb-pl-w")
-        t.tool_result(49, "tu-nb-pl-w", "File created successfully")
-    t.tool_use(49, "SubagentHandback", {"message": "Plan ready."}, "tu-nb-pl-h", second=30)
-    t.tool_result(49, "tu-nb-pl-h", '{"success":true}', second=31)
+        t.tool_use(start + 3, "Write", {"file_path": overview, "content": "# Plan\n"}, "tu-nb-pl-w")
+        t.tool_result(start + 3, "tu-nb-pl-w", "File created successfully")
+    t.tool_use(start + 3, "SubagentHandback", {"message": "Plan ready."}, "tu-nb-pl-h", second=30)
+    t.tool_result(start + 3, "tu-nb-pl-h", '{"success":true}', second=31)
     write_agent(cfg, repo, session_id, t, "sdlc-pipeline:planner", "Plan EMI feature", "tu-nb-pl", mtime=mtime)
     return "%s:%d" % (session_id, run_line)

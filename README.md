@@ -176,11 +176,11 @@ commands appear too. Costs are estimates from `scripts/pipeline-dashboard-prices
 edit.
 
 The printed link includes a one-time key (`#k=...`) that lets your browser in. The page keeps
-it for that tab only and removes it from the address bar. The key also appears in this Claude
-Code session's transcript and in your browser history, so treat the link as private: anyone with
-it can read this project's runs while the dashboard is running. The key changes every time the
-dashboard starts. Opening the dashboard address without the key shows a note to use the printed
-link.
+it for that tab only and removes it from the address bar. The key also appears in the transcript
+of every Claude Code session that opened the dashboard and in your browser history, so treat the
+link as private: anyone with it can read this project's runs while the dashboard is running. The key
+changes every time the dashboard starts. Opening the dashboard address without the key shows a note
+to use the printed link.
 
 It stops by itself after two hours with nobody viewing it. To stop it sooner, run
 `/sdlc-pipeline:pipeline-runs stop`, or ask Claude to stop the pipeline dashboard. Both

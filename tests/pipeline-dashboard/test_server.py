@@ -396,12 +396,14 @@ class SpawnTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         proc = mock.Mock(pid=1, returncode=1)
         proc.poll.return_value = 1
-        with mock.patch.object(cli, "free_port", return_value=8790),                 mock.patch.object(cli.subprocess, "Popen", return_value=proc) as popen:
+        with mock.patch.object(cli, "free_port", return_value=8790), \
+                mock.patch.object(cli.subprocess, "Popen", return_value=proc) as popen:
             result = cli.cmd_start(tmp, cfg=os.path.join(tmp, "cfg"))
         self.assertIn("error", result)
         options = popen.call_args[1]
         if os.name == "nt":
             self.assertEqual(options["creationflags"] & 0x08000000, 0x08000000)  # CREATE_NO_WINDOW
+            self.assertEqual(options["creationflags"] & 0x00000200, 0x00000200)  # CREATE_NEW_PROCESS_GROUP
             self.assertEqual(options["creationflags"] & 0x00000008, 0)  # not DETACHED_PROCESS
         else:
             self.assertTrue(options["start_new_session"])

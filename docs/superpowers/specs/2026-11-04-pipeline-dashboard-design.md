@@ -50,7 +50,7 @@ All new, except the README and the three version fields.
 | `scripts/pipeline-dashboard-prices.json` | Editable per-model price table for the cost estimate. |
 | `tests/pipeline-dashboard/` | Tests and hand-written fixtures (section 12). |
 | `README.md` | New "Watching a run" section. |
-| `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.cursor-plugin/plugin.json` | Version 3.4.1 → 3.5.0; 3.5.1 for the hidden-console fix and the view-only command; 3.6.0 for the rename (`/pipeline-ui` → `/pipeline-dashboard`, view-only command → `/pipeline-runs`). |
+| `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.cursor-plugin/plugin.json` | Version 3.4.1 → 3.5.0; 3.5.1 for the hidden-console fix and the view-only command; 3.6.0 for the rename (`/pipeline-ui` → `/pipeline-dashboard`, view-only command → `/pipeline-runs`); 3.6.1 for the review fixes and the command-header quoting. |
 
 Everything must run on **Python 3.8+**, matching the README's existing requirement.
 
@@ -442,11 +442,11 @@ start. The plan folder and git results are cached for 5 seconds.
 - **Referrer-Policy: no-referrer** on every response.
 - **`--open` uses a redirect file** (0600 on POSIX) instead of putting the key on the
   browser's command line.
-- **Residual risks:** the key appears in this Claude Code session's transcript (the JSON line
-  and `Dashboard: <url>`) and in the browser's history (the `#k=` URL), both the user's own
-  data; any process running as the same user can read the state file, the transcript or the
-  history, and so the key. The key protects against other accounts and web pages, not against
-  the user's own processes.
+- **Residual risks:** the key appears in the transcript of every Claude Code session that opened the
+  dashboard (the JSON line and `Dashboard: <url>`) and in the browser's history (the `#k=` URL),
+  both the user's own data; any process running as the same user can read the state file, the
+  transcript or the history, and so the key. The key protects against other accounts and web pages,
+  not against the user's own processes.
 - **No port sharing on Windows:** the server does not set `SO_REUSEADDR` there and sets
   `SO_EXCLUSIVEADDRUSE`, so no second socket can bind a port the dashboard is listening on.
 - The CLI's own health checks bypass any `HTTP_PROXY` setting.
@@ -505,7 +505,8 @@ Standard library `unittest`, like `tests/acceptance`:
 - README: a "Watching a run" section with what `/pipeline-dashboard` does, the stop command, where
   the data comes from, that the dashboard sends nothing anywhere and the link's key is private,
   and the Cursor limitation.
-- Version 3.4.1 → 3.5.0 in the three version fields; 3.5.1 and 3.6.0 follow-ups as in section 4.
+- Version 3.4.1 → 3.5.0 in the three version fields, then 3.5.1, 3.6.0 and 3.6.1 as in section 4; the
+  released version is 3.6.1.
 
 ## 15. Risks
 

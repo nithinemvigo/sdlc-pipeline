@@ -1,6 +1,6 @@
 ---
 description: Open the local run dashboard, then run /pipeline-all, /pipeline or /pipeline-parallel unchanged. The dashboard is read-only and shows stages, agents, token usage, questions and each task's changes live.
-argument-hint: [--flow pipeline-all|pipeline|pipeline-parallel] <request, as for the chosen flow>
+argument-hint: "[--flow pipeline-all|pipeline|pipeline-parallel] <request, as for the chosen flow>"
 ---
 
 # /pipeline-dashboard — dashboard + pipeline
